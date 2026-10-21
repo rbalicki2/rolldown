@@ -1,10 +1,10 @@
 import type { BindingChunkingContext } from '../binding.cjs';
+import type { ChunkingModuleInfo } from '../options/output-options';
 import type { PluginContextData } from '../plugin/plugin-context-data';
 import { transformModuleInfo } from '../utils/transform-module-info';
-import type { ModuleInfo } from './module-info';
 
 export class ChunkingContextImpl {
-  private moduleInfoCache: Map<string, ModuleInfo> | undefined = new Map();
+  private moduleInfoCache: Map<string, ChunkingModuleInfo> | undefined = new Map();
 
   constructor(
     private context: BindingChunkingContext,
@@ -15,7 +15,7 @@ export class ChunkingContextImpl {
     this.moduleInfoCache = undefined;
   }
 
-  getModuleInfo(moduleId: string): ModuleInfo | null {
+  getModuleInfo(moduleId: string): ChunkingModuleInfo | null {
     const cached = this.moduleInfoCache?.get(moduleId);
     if (cached) {
       return cached;
@@ -23,10 +23,13 @@ export class ChunkingContextImpl {
     const bindingInfo = this.context.getModuleInfo(moduleId);
     if (bindingInfo) {
       const option = this.pluginContextData.getModuleOption(moduleId);
-      const info = transformModuleInfo(bindingInfo, option);
+      // `Object.assign` keeps the lazy `code` and `ast` getters, which a spread would call.
+      const info: ChunkingModuleInfo = Object.assign(transformModuleInfo(bindingInfo, option), {
+        includedLength: this.context.getModuleIncludedLength(moduleId) ?? 0,
+      });
       Object.defineProperty(info, 'moduleSideEffects', {
         get: () => option.moduleSideEffects,
-        set: (moduleSideEffects: ModuleInfo['moduleSideEffects']) => {
+        set: (moduleSideEffects: ChunkingModuleInfo['moduleSideEffects']) => {
           option.moduleSideEffects = moduleSideEffects;
           option.invalidate = true;
         },

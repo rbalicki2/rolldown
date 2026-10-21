@@ -8,10 +8,12 @@ use std::{
 
 use arcstr::ArcStr;
 use itertools::{Either, Itertools};
+use oxc::span::GetSpan;
 use oxc_index::IndexVec;
 use rolldown_common::{
   Chunk, ChunkKind, ChunkingContext, EntryPoint, ManualCodeSplittingOptions, MatchGroup,
   MatchGroupName, Module, ModuleIdx, ModuleTable, ModuleTagBitSet, ModuleTagRegistry, NormalModule,
+  StmtInfoIdx,
 };
 use rolldown_error::BuildResult;
 use rolldown_plugin::SharedPluginDriver;
@@ -21,7 +23,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::utils::module_id_matcher::match_module_ids;
 use crate::{
   SharedOptions, chunk_graph::ChunkGraph, stages::link_stage::LinkStageOutput,
-  types::linking_metadata::LinkingMetadataVec,
+  type_alias::IndexEcmaAst, types::linking_metadata::LinkingMetadataVec,
 };
 
 use super::{
@@ -79,6 +81,7 @@ impl ModuleGroup {
 
 struct ManualSplitter<'a> {
   link_output: &'a LinkStageOutput,
+  ast_table: &'a IndexEcmaAst,
   index_splitting_info: &'a IndexSplittingInfo,
   options: &'a SharedOptions,
   chunking_options: &'a ManualCodeSplittingOptions,
@@ -191,7 +194,12 @@ impl ManualSplitter<'_> {
     // resolves the overlap later, in `emit_chunk_from_group`. If this loop dropped matched
     // modules, a module would go to the first group in the list, not to the group with the
     // highest priority.
-    let ctx = ChunkingContext::new(Arc::clone(&self.plugin_driver.module_infos));
+    let has_dynamic_name =
+      self.match_groups.iter().any(|group| matches!(group.name, MatchGroupName::Dynamic(_)));
+    let ctx = ChunkingContext::new(
+      Arc::clone(&self.plugin_driver.module_infos),
+      if has_dynamic_name { self.included_lengths_by_id() } else { FxHashMap::default() },
+    );
 
     for (match_group_index, match_group) in self.match_groups.iter().copied().enumerate() {
       let matched = match &match_group.test {
@@ -287,6 +295,19 @@ impl ManualSplitter<'_> {
     }
 
     Ok((module_groups, entries_aware_groups))
+  }
+
+  /// See internal-docs/manual-code-splitting/implementation.md#included-length.
+  fn included_lengths_by_id(&self) -> FxHashMap<ArcStr, u32> {
+    let included_lengths = compute_included_lengths(self.link_output, self.ast_table);
+    self
+      .link_output
+      .module_table
+      .modules
+      .iter()
+      .filter_map(Module::as_normal)
+      .map(|module| (module.id.as_arc_str().clone(), included_lengths[module.idx]))
+      .collect()
   }
 
   /// Post-process entries_aware groups: split each group's modules by bitset pattern,
@@ -561,6 +582,7 @@ impl GenerateStage<'_> {
       .collect();
     let mut splitter = ManualSplitter {
       link_output: self.link_output,
+      ast_table: &self.ast_table,
       index_splitting_info,
       options: self.options,
       chunking_options,
@@ -582,6 +604,41 @@ impl GenerateStage<'_> {
     }
     result
   }
+}
+
+/// Returns, for each module, the summed source length of the top-level statements that tree
+/// shaking kept. Modules tree shaking removed and external modules get `0`.
+///
+/// Rendering has not happened yet, so this is an estimate of `RenderedModule.renderedLength`.
+/// See internal-docs/manual-code-splitting/implementation.md#included-length.
+fn compute_included_lengths(
+  link_output: &LinkStageOutput,
+  ast_table: &IndexEcmaAst,
+) -> IndexVec<ModuleIdx, u32> {
+  link_output
+    .module_table
+    .modules
+    .iter_enumerated()
+    .map(|(module_idx, module)| {
+      let meta = &link_output.metas[module_idx];
+      if !module.is_normal() || !meta.is_included {
+        return 0;
+      }
+      let Some(ast) = &ast_table[module_idx] else {
+        return 0;
+      };
+      // `program.body[i]` is described by statement info `i + 1`; statement info `0` is the
+      // namespace object, which has no source.
+      ast
+        .program()
+        .body
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| meta.stmt_info_included.has_bit(StmtInfoIdx::from_usize(index + 1)))
+        .map(|(_, stmt)| stmt.span().size())
+        .sum()
+    })
+    .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

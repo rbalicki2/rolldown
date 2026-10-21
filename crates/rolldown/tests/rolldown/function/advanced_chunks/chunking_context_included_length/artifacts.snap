@@ -1,0 +1,22 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## entry.js
+
+```js
+import { t as used } from "./lib.js";
+// entry.js
+console.log(used);
+
+```
+
+## lib.js
+
+```js
+// lib.js
+const used = "used";
+export { used as t };
+
+```

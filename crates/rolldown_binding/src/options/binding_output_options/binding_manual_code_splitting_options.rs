@@ -86,4 +86,9 @@ impl BindingChunkingContext {
   pub fn get_module_info(&self, module_id: String) -> Option<BindingModuleInfo> {
     self.inner.get_module_info(&module_id).map(BindingModuleInfo::new)
   }
+
+  #[napi]
+  pub fn get_module_included_length(&self, module_id: String) -> Option<u32> {
+    self.inner.get_module_included_length(&module_id)
+  }
 }

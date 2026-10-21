@@ -12,6 +12,19 @@ All dynamic group-name callbacks in one manual splitting pass share a `ChunkingC
 
 The binding supplies a private `internalInvalidateModuleInfoCache` callback on the manual splitting options. `apply_manual_code_splitting` invokes it after `split` returns, including errors. If both splitting and invalidation fail, the splitting error takes precedence. The callback drops the cache and disables caching on retained contexts; `moduleSideEffects` continues to read and write the shared module-option store. The next splitting pass creates a fresh context. The plugin-context API and graph construction do not use this cache.
 
+### Included length
+
+`ChunkingContext.getModuleInfo(id).includedLength` (Rust: `ChunkingContextImpl::get_module_included_length`) is the module's source length after tree shaking. `compute_included_lengths` in `manual_code_splitting.rs` sums the spans of the top-level statements whose `stmt_info_included` bit is set. Statement info `i + 1` describes `program.body[i]` (statement info `0` is the namespace object), the same pairing `remove_unused_top_level_stmt` in the module finalizer uses. Modules tree shaking removed and external modules get `0`.
+
+Manual splitting runs in the generate stage after the link stage's `include_statements`, so inclusion is known, but rendering has not happened, so the value estimates `RenderedModule.renderedLength`:
+
+- It counts import and export declarations, which rendering rewrites into cross-chunk imports and exports.
+- It does not count what rendering adds: CommonJS and ESM wrappers, namespace objects, runtime helpers, and identifier renames.
+- Statements generated in the link stage (lazy-export JSON declarations, wrapper statements) have no source span and count as `0`.
+- Statements included after chunking are not counted: simulated facade inclusion in `optimize_facade_entry_chunks` replays inclusion, and the finalizer keeps statements that `OrderWrapState::forces_runtime_stmt` forces under `strictExecutionOrder`.
+
+The lengths are computed once per splitting pass, and only when a group has a function `name`.
+
 ### `entriesAware`
 
 When `entriesAware: true`, a group's modules are further split by **which entry points can reach them**. This produces per-entry-set chunks instead of one monolithic group chunk.

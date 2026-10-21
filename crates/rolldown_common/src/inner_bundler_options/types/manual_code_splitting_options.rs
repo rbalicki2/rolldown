@@ -1,7 +1,9 @@
 use std::{borrow::Cow, ops::Deref, pin::Pin, sync::Arc};
 
+use arcstr::ArcStr;
 use rolldown_error::BuildResult;
 use rolldown_utils::js_regex::HybridRegex;
+use rustc_hash::FxHashMap;
 #[cfg(feature = "deserialize_bundler_options")]
 use schemars::JsonSchema;
 #[cfg(feature = "deserialize_bundler_options")]
@@ -175,8 +177,11 @@ where
 pub struct ChunkingContext(Arc<ChunkingContextImpl>);
 
 impl ChunkingContext {
-  pub fn new(module_infos: SharedModuleInfoDashMap) -> Self {
-    Self(Arc::new(ChunkingContextImpl { module_infos }))
+  pub fn new(
+    module_infos: SharedModuleInfoDashMap,
+    included_lengths: FxHashMap<ArcStr, u32>,
+  ) -> Self {
+    Self(Arc::new(ChunkingContextImpl { module_infos, included_lengths }))
   }
 }
 
@@ -191,10 +196,18 @@ impl Deref for ChunkingContext {
 #[derive(Debug)]
 pub struct ChunkingContextImpl {
   module_infos: SharedModuleInfoDashMap,
+  /// Included length of every normal module, keyed by module id.
+  /// See internal-docs/manual-code-splitting/implementation.md#included-length.
+  included_lengths: FxHashMap<ArcStr, u32>,
 }
 
 impl ChunkingContextImpl {
   pub fn get_module_info(&self, module_id: &str) -> Option<Arc<ModuleInfo>> {
     self.module_infos.get(module_id).map(|v| Arc::<ModuleInfo>::clone(v.value()))
+  }
+
+  /// Returns the included length of a normal module, or `None` for an external or unknown id.
+  pub fn get_module_included_length(&self, module_id: &str) -> Option<u32> {
+    self.included_lengths.get(module_id).copied()
   }
 }

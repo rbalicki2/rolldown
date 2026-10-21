@@ -140,13 +140,29 @@ export interface CommentsOptions {
   jsdoc?: boolean;
 }
 
+/** @category Code Splitting */
+export interface ChunkingModuleInfo extends ModuleInfo {
+  /**
+   * The length in bytes of the module's source that tree shaking kept: the summed source spans of
+   * its included top-level statements. `0` for a module tree shaking removed or an external module.
+   *
+   * Chunking runs before rendering, so this estimates
+   * {@linkcode RenderedModule.renderedLength}. It does not count the code rendering adds or
+   * removes, such as import and export statements rewritten across chunks, CommonJS or ESM
+   * wrappers, or renamed identifiers.
+   *
+   * @experimental
+   */
+  includedLength: number;
+}
+
 /** @inline @category Code Splitting */
 export interface ChunkingContext {
   /**
    * The returned object and its dependency arrays are reused within the current chunking pass.
    * Treat graph fields as read-only. `meta` properties and the `moduleSideEffects` field remain mutable.
    */
-  getModuleInfo(moduleId: string): ModuleInfo | null;
+  getModuleInfo(moduleId: string): ChunkingModuleInfo | null;
 }
 
 export interface OutputOptions {

@@ -1585,6 +1585,7 @@ export declare class BindingCallableBuiltinPlugin {
 
 export declare class BindingChunkingContext {
   getModuleInfo(moduleId: string): BindingModuleInfo | null
+  getModuleIncludedLength(moduleId: string): number | null
 }
 
 /** A decoded source map with mappings as an array of arrays instead of VLQ-encoded string. */
