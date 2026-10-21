@@ -1029,6 +1029,28 @@ export type CodeSplittingGroup = {
    */
   entriesAwareMaxAddedBytesPerSavedRequest?: number;
   /**
+   * Extra loads for
+   * {@linkcode CodeSplittingGroup.entriesAwareMaxAddedBytesPerSavedRequest | entriesAwareMaxAddedBytesPerSavedRequest}
+   * to count. Each load root lists the ids of modules that load together: an entry and the
+   * dynamically imported modules a page loads before it is usable, such as its route chunks and
+   * the lazy components it renders first. A load root downloads the subgroups all of them reach,
+   * so subgroups that no single entry loads together can merge when a page load downloads both.
+   *
+   * Each id must be the id of an entry or of a dynamically imported module, either absolute or
+   * relative to {@linkcode InputOptions.cwd | cwd}.
+   *
+   * @example
+   * ```js
+   * entriesAwareLoadRoots: [
+   *   ['src/main.js', 'src/routes/home.js', 'src/components/feed.js'],
+   *   ['src/main.js', 'src/routes/profile.js'],
+   * ]
+   * ```
+   *
+   * @experimental
+   */
+  entriesAwareLoadRoots?: string[][];
+  /**
    * Whether to include captured modules' dependencies.
    *
    * Enabling this option reduces the chance of generating circular chunks.

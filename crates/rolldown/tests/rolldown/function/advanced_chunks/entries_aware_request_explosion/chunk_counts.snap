@@ -1,0 +1,14 @@
+---
+source: crates/rolldown/tests/integration/../rolldown/function/advanced_chunks/entries_aware_request_explosion/mod.rs
+expression: table
+---
+Files each page load downloads and their unminified bytes, by configuration.
+
+page load                                       default chunking                    entriesAware  + maxAddedBytesPerSavedRequest                     + loadRoots
+app.js + pages/page-00.js                       22 files, 4953 B                23 files, 7058 B                10 files, 5638 B                 7 files, 4846 B
+app.js + pages/page-01.js                       26 files, 5352 B                28 files, 7554 B                10 files, 5856 B                 7 files, 5093 B
+app.js + pages/page-02.js                       24 files, 5011 B                27 files, 6895 B                 9 files, 5305 B                 7 files, 5113 B
+app.js + pages/page-07.js                       23 files, 5137 B                25 files, 7448 B                13 files, 6409 B                 9 files, 5913 B
+public.js + pages/page-00.js                    22 files, 4242 B                23 files, 6347 B                10 files, 4927 B                 7 files, 4135 B
+public.js + pages/page-01.js                    26 files, 4641 B                28 files, 6843 B                10 files, 5145 B                 7 files, 4382 B
+chunks in the build                                           74                              85                              50                              45

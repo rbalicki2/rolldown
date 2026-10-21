@@ -1,0 +1,30 @@
+{
+  "_comment": "No single entry loads both `lib-shell` and `lib-a`, so without load roots no merge saves a request. The load root `main.js` + `page-a.js` downloads both, and merging them saves it one request for 94 added bytes (`lib-a` added to `main` and `admin`, `lib-shell` added to `page-a` and `page-c`), within the budget of 100. `lib-b` stays in the chunk of `page-b`, the only entry that loads it. `admin` loads `lib-shell` and `page-c` loads `lib-a` so that neither is a module only one entry loads, which would stay in that entry's chunk.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "./main.js"
+      },
+      {
+        "name": "admin",
+        "import": "./admin.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "test": "lib-",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 100,
+          "entriesAwareLoadRoots": [["./main.js", "./page-a.js"]]
+        }
+      ]
+    },
+    "experimental": {
+      "attachDebugInfo": "full"
+    }
+  },
+  "hiddenRuntimeModule": true
+}

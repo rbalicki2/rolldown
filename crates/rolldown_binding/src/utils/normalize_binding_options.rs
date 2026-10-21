@@ -446,6 +446,7 @@ fn normalize_code_splitting(
                   entries_aware_merge_threshold: item.entries_aware_merge_threshold,
                   entries_aware_max_added_bytes_per_saved_request: item
                     .entries_aware_max_added_bytes_per_saved_request,
+                  entries_aware_load_roots: item.entries_aware_load_roots,
                   tags: item.tags.map(|tags| tags.into_iter().map(ModuleTag::from).collect()),
                   include_dependencies_recursively: item.include_dependencies_recursively,
                 })

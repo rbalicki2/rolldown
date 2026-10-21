@@ -15,7 +15,7 @@ use rolldown_common::{
   MatchGroupName, Module, ModuleIdx, ModuleTable, ModuleTagBitSet, ModuleTagRegistry, NormalModule,
   StmtInfoIdx,
 };
-use rolldown_error::BuildResult;
+use rolldown_error::{BuildDiagnostic, BuildResult, InvalidOptionType};
 use rolldown_plugin::SharedPluginDriver;
 use rolldown_utils::{BitSet, IndexBitSet, concat_string, xxhash::xxhash_with_base};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -113,7 +113,7 @@ impl ManualSplitter<'_> {
       return Ok(());
     }
 
-    self.process_entries_aware_groups(entries_aware_groups, &mut module_groups);
+    self.process_entries_aware_groups(entries_aware_groups, &mut module_groups)?;
 
     let module_groups = self.into_priority_sorted_groups(module_groups);
     if module_groups.is_empty() {
@@ -329,7 +329,7 @@ impl ManualSplitter<'_> {
     &self,
     entries_aware_groups: Vec<ModuleGroup>,
     module_groups: &mut IndexVec<ModuleGroupIdx, ModuleGroup>,
-  ) {
+  ) -> BuildResult<()> {
     for group in entries_aware_groups {
       if group.modules.is_empty() {
         continue;
@@ -387,22 +387,23 @@ impl ManualSplitter<'_> {
         }
       }
 
-      if let Some(max_added_bytes_per_saved_request) = max_added_bytes_per_saved_request
-        && subgroups.len() > 1
-      {
-        let loads = self.entries_aware_loads();
-        merge_entries_aware_subgroups_by_requests(
-          &mut subgroups,
-          &RequestMergeContext {
-            link_output: self.link_output,
-            included_lengths: self.included_lengths(),
-            module_loaders: self
-              .module_loaders
-              .get_or_init(|| compute_module_loaders(self.link_output, &self.flattened_entries)),
-            loads: &loads,
-          },
-          max_added_bytes_per_saved_request,
-        );
+      if let Some(max_added_bytes_per_saved_request) = max_added_bytes_per_saved_request {
+        // Resolved even when there is nothing to merge, so a wrong id is always reported.
+        let loads = self.entries_aware_loads(match_group_index)?;
+        if subgroups.len() > 1 {
+          merge_entries_aware_subgroups_by_requests(
+            &mut subgroups,
+            &RequestMergeContext {
+              link_output: self.link_output,
+              included_lengths: self.included_lengths(),
+              module_loaders: self
+                .module_loaders
+                .get_or_init(|| compute_module_loaders(self.link_output, &self.flattened_entries)),
+              loads: &loads,
+            },
+            max_added_bytes_per_saved_request,
+          );
+        }
       }
 
       // Optionally merge small subgroups
@@ -431,6 +432,7 @@ impl ManualSplitter<'_> {
         });
       }
     }
+    Ok(())
   }
 
   /// Removes from a group the request merge runs on the modules that stay in an entry's chunk.
@@ -494,16 +496,57 @@ impl ManualSplitter<'_> {
     })
   }
 
-  /// Returns the loads the request-aware merge counts: each entry on its own.
-  fn entries_aware_loads(&self) -> Vec<BitSet> {
+  /// Returns the loads the request-aware merge counts: each entry on its own, then each of the
+  /// group's `entriesAwareLoadRoots`. Errors when a load root names a module that is not an entry.
+  fn entries_aware_loads(&self, match_group_index: usize) -> BuildResult<Vec<BitSet>> {
     let entries_len: u32 = self.flattened_entries.len().try_into().expect("Too many entries");
-    (0..entries_len)
+    let load_roots =
+      self.match_groups[match_group_index].entries_aware_load_roots.as_deref().unwrap_or_default();
+    let mut loads: Vec<BitSet> = (0..entries_len)
       .map(|entry_index| {
         let mut load = BitSet::new(entries_len);
         load.set_bit(entry_index);
         load
       })
-      .collect()
+      .collect();
+    for load_root in load_roots {
+      loads.push(self.resolve_entry_ids(match_group_index, "entriesAwareLoadRoots", load_root)?);
+    }
+    Ok(loads)
+  }
+
+  /// Returns the entry indices of the entries whose module has one of `module_ids` as its id or
+  /// stable id, a leading `./` ignored. Errors when an id matches no entry.
+  fn resolve_entry_ids(
+    &self,
+    match_group_index: usize,
+    option_name: &'static str,
+    module_ids: &[String],
+  ) -> BuildResult<BitSet> {
+    let entries_len: u32 = self.flattened_entries.len().try_into().expect("Too many entries");
+    let mut entries = BitSet::new(entries_len);
+    for module_id in module_ids {
+      let module_id = module_id.strip_prefix("./").unwrap_or(module_id);
+      let mut found = false;
+      for (entry_index, entry) in self.flattened_entries.iter().enumerate() {
+        let module = &self.link_output.module_table[entry.idx];
+        if module.id().as_str() == module_id || module.stable_id().as_str() == module_id {
+          entries.set_bit(entry_index.try_into().expect("Too many entries"));
+          found = true;
+        }
+      }
+      if !found {
+        return Err(
+          BuildDiagnostic::invalid_option(InvalidOptionType::EntriesAwareIdNotAnEntry {
+            option_name,
+            group_index: match_group_index,
+            module_id: module_id.to_string(),
+          })
+          .into(),
+        );
+      }
+    }
+    Ok(entries)
   }
 
   fn into_priority_sorted_groups(

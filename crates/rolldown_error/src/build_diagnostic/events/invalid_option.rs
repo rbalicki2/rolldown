@@ -25,6 +25,7 @@ pub enum InvalidOptionType {
   NulByteInFilename { pattern_name: String },
   InlineCommonChunksInvalidMaxSize(String),
   InlineCommonChunksRequirement(&'static str),
+  EntriesAwareIdNotAnEntry { option_name: &'static str, group_index: usize, module_id: String },
 }
 
 #[derive(Debug)]
@@ -121,6 +122,9 @@ impl BuildEvent for InvalidOption {
         }
         InvalidOptionType::InlineCommonChunksRequirement(requirement) => {
           format!("Invalid option combination for \"output.codeSplitting.experimentalInlineCommonChunks\" - a `maxSize` greater than 0 requires {requirement}.")
+        }
+        InvalidOptionType::EntriesAwareIdNotAnEntry { option_name, group_index, module_id } => {
+          format!("Invalid value \"{module_id}\" in option \"output.codeSplitting.groups[{group_index}].{option_name}\" - it is neither an entry nor a dynamically imported module.")
         }
     }
   }

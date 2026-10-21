@@ -1,0 +1,22 @@
+{
+  "_comment": "`missing.js` is not an entry or a dynamically imported module, so the load root cannot be resolved.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "main.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 50,
+          "entriesAwareLoadRoots": [["main.js", "missing.js"]]
+        }
+      ]
+    }
+  },
+  "expectError": true
+}

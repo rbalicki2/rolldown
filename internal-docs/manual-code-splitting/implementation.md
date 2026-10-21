@@ -134,6 +134,12 @@ Known gaps:
 - A load that downloads a merged chunk also runs the top-level code of the modules it did not need, as with any manual group.
 - A merge reprices every pair that has a subgroup whose closure changed or that a load started downloading. On graphs shaped like an app's (`thousands_of_dynamic_entries`: 3,000 subgroups, 2,010 loads) the search takes well under a second in a release build. When most loads download most subgroups, most pairs are repriced after every merge: on a random import graph of 3,000 subgroups and 2,010 loads the search took about ten seconds, and on one whose imports chain through nearby subgroups, so that each load downloads a large part of the graph, it did not finish in 30 minutes.
 
+#### `entriesAwareLoadRoots`
+
+A page load is rarely one entry. A page downloads its entry's static graph, then its route chunks and the lazy components it renders first, each a separate dynamic entry. With only per-entry loads, two subgroups that no single entry downloads together never merge, even when every load of the page downloads both. Each load root lists entries that load together, and `entries_aware_loads` adds it to the per-entry loads, so the merge counts the requests it saves that page load. Roots are counted like any other load: they save requests and they pay for added bytes. Ids match an entry's module id or stable id, a leading `./` ignored; an id that matches no entry is an `INVALID_OPTION` error.
+
+`function/advanced_chunks/entries_aware_request_explosion` measures both options on a two-entry app with twenty lazily loaded pages that each lazily load two widgets.
+
 ## Related
 
 - [code-splitting.md](../code-splitting/implementation.md) — automatic code splitting

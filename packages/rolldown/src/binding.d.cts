@@ -2611,6 +2611,7 @@ export interface BindingMatchGroup {
   entriesAware?: boolean
   entriesAwareMergeThreshold?: number
   entriesAwareMaxAddedBytesPerSavedRequest?: number
+  entriesAwareLoadRoots?: Array<Array<string>>
   tags?: Array<string>
   includeDependenciesRecursively?: boolean
 }

@@ -1,0 +1,64 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## admin.js
+
+```js
+//! User-defined Entry: [Entry-Module-Id: admin.js] [Name: admin]
+import "./lib~main~admin~page-a~page-c.js";
+// admin.js
+const pageA = () => import("./page-a.js");
+export { pageA };
+
+```
+
+## lib~main~admin~page-a~page-c.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: main.js, admin.js, page-a.js, page-c.js]
+// lib-shell.js
+console.log("lib-shell");
+// lib-a.js
+console.log("lib-a");
+
+```
+
+## main.js
+
+```js
+//! User-defined Entry: [Entry-Module-Id: main.js] [Name: main]
+import "./lib~main~admin~page-a~page-c.js";
+// main.js
+const pageA = () => import("./page-a.js");
+const pageB = () => import("./page-b.js");
+const pageC = () => import("./page-c.js");
+export { pageA, pageB, pageC };
+
+```
+
+## page-a.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-a.js] [Name: <none>]
+import "./lib~main~admin~page-a~page-c.js";
+
+```
+
+## page-b.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-b.js] [Name: <none>]
+// lib-b.js
+console.log("lib-b");
+
+```
+
+## page-c.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-c.js] [Name: <none>]
+import "./lib~main~admin~page-a~page-c.js";
+
+```

@@ -79,6 +79,12 @@ pub struct MatchGroup {
   /// bytes a merge adds to loads, per request it saves them, stay within this budget.
   /// See internal-docs/manual-code-splitting/implementation.md#entriesawaremaxaddedbytespersavedrequest.
   pub entries_aware_max_added_bytes_per_saved_request: Option<f64>,
+  /// Only effective with `entries_aware_max_added_bytes_per_saved_request`. Each load root lists
+  /// module ids of entries or dynamically imported modules that load together, such as an entry and
+  /// the route chunks a page imports before it is usable. Each root is one more load the merge
+  /// counts.
+  /// See internal-docs/manual-code-splitting/implementation.md#entriesawareloadroots.
+  pub entries_aware_load_roots: Option<Vec<Vec<String>>>,
   /// Filter modules by tags. Only modules with all specified tags are captured.
   /// See internal-docs/module-tags/implementation.md
   #[cfg_attr(

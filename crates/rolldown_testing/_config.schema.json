@@ -1401,6 +1401,19 @@
           ],
           "format": "double"
         },
+        "entriesAwareLoadRoots": {
+          "description": "Only effective with `entries_aware_max_added_bytes_per_saved_request`. Each load root lists\nmodule ids of entries or dynamically imported modules that load together, such as an entry and\nthe route chunks a page imports before it is usable. Each root is one more load the merge\ncounts.\nSee internal-docs/manual-code-splitting/implementation.md#entriesawareloadroots.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
         "tags": {
           "description": "Filter modules by tags. Only modules with all specified tags are captured.\nSee internal-docs/module-tags/implementation.md",
           "type": [
