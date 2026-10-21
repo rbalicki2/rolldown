@@ -1,0 +1,10 @@
+{
+  "name": "entries-aware-request-merge-empty-module",
+  "private": true,
+  "sideEffects": [
+    "./main.js",
+    "./admin.js",
+    "./page.js",
+    "./shared.js"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "_comment": "The group has no `test`, so it captures the entry modules too. With the request merge on, `main.js` and `admin.js` stay in their entry chunks instead of moving into `all` chunks that their entry chunks would only re-export.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "./main.js"
+      },
+      {
+        "name": "admin",
+        "import": "./admin.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "all",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 1000000
+        }
+      ]
+    }
+  },
+  "hiddenRuntimeModule": true
+}

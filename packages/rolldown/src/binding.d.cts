@@ -2610,6 +2610,7 @@ export interface BindingMatchGroup {
   maxSize?: number
   entriesAware?: boolean
   entriesAwareMergeThreshold?: number
+  entriesAwareMaxAddedBytesPerSavedRequest?: number
   tags?: Array<string>
   includeDependenciesRecursively?: boolean
 }

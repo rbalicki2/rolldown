@@ -1,0 +1,25 @@
+{
+  "_comment": "Each page loads `lib-abc` and two of `lib-ab`, `lib-ac` and `lib-bc`. Merging `lib-ac` (21 bytes) into `lib-abc` saves pages a and c a request for 21 bytes added to page b, 10.5 bytes per saved request, and merging `lib-bc` into the result then costs the same. Merging `lib-ab` (91 bytes) would add 91 bytes to page c for two saved requests, 45.5 per request, over the budget of 25, so pages a and b load two `lib` chunks and page c one.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "./main.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "test": "lib-",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 25
+        }
+      ]
+    },
+    "experimental": {
+      "attachDebugInfo": "full"
+    }
+  },
+  "hiddenRuntimeModule": true
+}

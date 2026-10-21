@@ -3,12 +3,12 @@ use std::{
   cmp::{Ordering, Reverse},
   collections::BinaryHeap,
   path::Path,
-  sync::Arc,
+  sync::{Arc, OnceLock},
 };
 
 use arcstr::ArcStr;
 use itertools::{Either, Itertools};
-use oxc::span::GetSpan;
+use oxc::{ast::ast::Statement, span::GetSpan};
 use oxc_index::IndexVec;
 use rolldown_common::{
   Chunk, ChunkKind, ChunkingContext, EntryPoint, ManualCodeSplittingOptions, MatchGroup,
@@ -30,6 +30,9 @@ use super::{
   GenerateStage,
   chunk_ext::{ChunkCreationReason, ChunkDebugExt},
   code_splitting::IndexSplittingInfo,
+  entries_aware_request_merge::{
+    RequestMergeContext, compute_module_loaders, merge_entries_aware_subgroups_by_requests,
+  },
 };
 
 // `ModuleGroup` is a temporary representation of `Chunk`. A valid `ModuleGroup` would be converted to a `Chunk` in the end.
@@ -52,10 +55,10 @@ struct ModuleGroupId {
 
 /// Lightweight representation used during entries_aware subgroup merge.
 /// Contains only the fields needed for bitset-based merge operations.
-struct EntriesAwareSubgroup {
-  bits: BitSet,
-  modules: FxHashSet<ModuleIdx>,
-  sizes: f64,
+pub(super) struct EntriesAwareSubgroup {
+  pub(super) bits: BitSet,
+  pub(super) modules: FxHashSet<ModuleIdx>,
+  pub(super) sizes: f64,
 }
 
 oxc_index::define_index_type! {
@@ -94,6 +97,10 @@ struct ManualSplitter<'a> {
   chunk_graph: &'a mut ChunkGraph,
   module_to_assigned: &'a mut IndexBitSet<ModuleIdx>,
   flattened_entries: Vec<&'a EntryPoint>,
+  /// See [`compute_included_lengths`].
+  included_lengths: OnceLock<IndexVec<ModuleIdx, u32>>,
+  /// See [`compute_module_loaders`].
+  module_loaders: OnceLock<IndexVec<ModuleIdx, BitSet>>,
 }
 
 impl ManualSplitter<'_> {
@@ -298,8 +305,13 @@ impl ManualSplitter<'_> {
   }
 
   /// See internal-docs/manual-code-splitting/implementation.md#included-length.
+  fn included_lengths(&self) -> &IndexVec<ModuleIdx, u32> {
+    self.included_lengths.get_or_init(|| compute_included_lengths(self.link_output, self.ast_table))
+  }
+
+  /// See internal-docs/manual-code-splitting/implementation.md#included-length.
   fn included_lengths_by_id(&self) -> FxHashMap<ArcStr, u32> {
-    let included_lengths = compute_included_lengths(self.link_output, self.ast_table);
+    let included_lengths = self.included_lengths();
     self
       .link_output
       .module_table
@@ -328,10 +340,17 @@ impl ManualSplitter<'_> {
       let priority = group.priority;
       let merge_threshold =
         self.match_groups[match_group_index].entries_aware_merge_threshold.unwrap_or(0.0);
-      let group_modules = group.modules.into_iter();
+      let max_added_bytes_per_saved_request =
+        self.match_groups[match_group_index].entries_aware_max_added_bytes_per_saved_request;
+      let mut group_modules = group.modules;
+      if max_added_bytes_per_saved_request.is_some() {
+        self.keep_entry_chunk_modules(&mut group_modules);
+        group_modules.retain(|module_idx| !self.renders_nothing(*module_idx));
+      }
+      let group_modules = group_modules.into_iter();
       // Merge ties use subgroup keys, so assign them in execution order.
       // See internal-docs/manual-code-splitting/implementation.md.
-      let group_modules = if merge_threshold > 0.0 {
+      let group_modules = if merge_threshold > 0.0 || max_added_bytes_per_saved_request.is_some() {
         Either::Left(
           group_modules
             .sorted_unstable_by_key(|idx| self.link_output.module_table[*idx].exec_order()),
@@ -368,6 +387,24 @@ impl ManualSplitter<'_> {
         }
       }
 
+      if let Some(max_added_bytes_per_saved_request) = max_added_bytes_per_saved_request
+        && subgroups.len() > 1
+      {
+        let loads = self.entries_aware_loads();
+        merge_entries_aware_subgroups_by_requests(
+          &mut subgroups,
+          &RequestMergeContext {
+            link_output: self.link_output,
+            included_lengths: self.included_lengths(),
+            module_loaders: self
+              .module_loaders
+              .get_or_init(|| compute_module_loaders(self.link_output, &self.flattened_entries)),
+            loads: &loads,
+          },
+          max_added_bytes_per_saved_request,
+        );
+      }
+
       // Optionally merge small subgroups
       if merge_threshold > 0.0 && subgroups.len() > 1 {
         let keys: Vec<u32> = subgroups.keys().copied().collect();
@@ -394,6 +431,79 @@ impl ManualSplitter<'_> {
         });
       }
     }
+  }
+
+  /// Removes from a group the request merge runs on the modules that stay in an entry's chunk.
+  /// The merge never moves an entry module, emitted entries included, into a shared chunk, which
+  /// would leave the entry chunk a facade. Modules whose bits name one entry alone stay in that
+  /// entry's chunk when the entry is user-defined, where a chunk of their own would only add a
+  /// request to the entry's load, and when that chunk keeps a module the group does not capture,
+  /// such as a stylesheet a `test` leaves out: a group chunk importing that module would import the
+  /// entry chunk, which imports the group chunk back.
+  fn keep_entry_chunk_modules(&self, group_modules: &mut FxHashSet<ModuleIdx>) {
+    let single_entry =
+      |bits: &BitSet| if bits.bit_count() == 1 { bits.index_of_one().next() } else { None };
+    let mut kept_entries =
+      BitSet::new(self.flattened_entries.len().try_into().expect("Too many entries"));
+    for (entry_index, entry) in self.flattened_entries.iter().enumerate() {
+      if entry.kind.is_user_defined() {
+        group_modules.remove(&entry.idx);
+        kept_entries.set_bit(entry_index.try_into().expect("Too many entries"));
+      }
+    }
+    for module in self.link_output.module_table.modules.iter().filter_map(Module::as_normal) {
+      if self.link_output.metas[module.idx].is_included
+        && !self.module_to_assigned.has_bit(module.idx)
+        && !group_modules.contains(&module.idx)
+        && let Some(entry_index) = single_entry(&self.index_splitting_info[module.idx].bits)
+      {
+        kept_entries.set_bit(entry_index);
+      }
+    }
+    group_modules.retain(|module_idx| {
+      single_entry(&self.index_splitting_info[*module_idx].bits)
+        .is_none_or(|entry_index| !kept_entries.has_bit(entry_index))
+    });
+  }
+
+  /// Tells whether a module renders no code: it has no side effects, its namespace object is not
+  /// included, and every top-level statement tree shaking kept is an import or a re-export. Its
+  /// importers read bindings from the modules it re-exports, so no chunk imports the chunk that
+  /// holds it. The request merge leaves such a module out: in a merged chunk it would join the
+  /// startup graph of every load of that chunk without adding a byte, and the merge, which follows
+  /// `load_dependencies`, cannot tell.
+  fn renders_nothing(&self, module_idx: ModuleIdx) -> bool {
+    let meta = &self.link_output.metas[module_idx];
+    if self.link_output.module_table[module_idx].side_effects().has_side_effects()
+      || meta.stmt_info_included.has_bit(StmtInfoIdx::from_usize(0))
+    {
+      return false;
+    }
+    let Some(ast) = &self.ast_table[module_idx] else {
+      return false;
+    };
+    ast.program().body.iter().enumerate().all(|(index, stmt)| {
+      !meta.stmt_info_included.has_bit(StmtInfoIdx::from_usize(index + 1))
+        || matches!(
+          stmt,
+          Statement::ImportDeclaration(_)
+            | Statement::ExportAllDeclaration(_)
+            | Statement::ExportNamedDeclaration(_)
+            | Statement::ExportFromDeclaration(_)
+        )
+    })
+  }
+
+  /// Returns the loads the request-aware merge counts: each entry on its own.
+  fn entries_aware_loads(&self) -> Vec<BitSet> {
+    let entries_len: u32 = self.flattened_entries.len().try_into().expect("Too many entries");
+    (0..entries_len)
+      .map(|entry_index| {
+        let mut load = BitSet::new(entries_len);
+        load.set_bit(entry_index);
+        load
+      })
+      .collect()
   }
 
   fn into_priority_sorted_groups(
@@ -593,6 +703,8 @@ impl GenerateStage<'_> {
       chunk_graph,
       module_to_assigned,
       flattened_entries,
+      included_lengths: OnceLock::new(),
+      module_loaders: OnceLock::new(),
     };
     let result = splitter.split().await;
     // Release the JS module-info cache on both success and failure.
@@ -737,7 +849,7 @@ fn merge_entries_aware_subgroups(
   }
 }
 
-fn merge_subgroups(
+pub(super) fn merge_subgroups(
   subgroups: &mut FxHashMap<u32, EntriesAwareSubgroup>,
   from_key: u32,
   to_key: u32,

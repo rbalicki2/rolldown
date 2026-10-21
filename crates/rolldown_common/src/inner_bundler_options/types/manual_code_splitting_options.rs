@@ -75,6 +75,10 @@ pub struct MatchGroup {
   pub entries_aware: Option<bool>,
   /// Only effective when `entriesAware` is set to `true`.
   pub entries_aware_merge_threshold: Option<f64>,
+  /// Only effective when `entriesAware` is set to `true`. Merges subgroups while the included
+  /// bytes a merge adds to loads, per request it saves them, stay within this budget.
+  /// See internal-docs/manual-code-splitting/implementation.md#entriesawaremaxaddedbytespersavedrequest.
+  pub entries_aware_max_added_bytes_per_saved_request: Option<f64>,
   /// Filter modules by tags. Only modules with all specified tags are captured.
   /// See internal-docs/module-tags/implementation.md
   #[cfg_attr(

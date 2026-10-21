@@ -64,6 +64,7 @@ pub struct BindingMatchGroup {
   pub max_size: Option<f64>,
   pub entries_aware: Option<bool>,
   pub entries_aware_merge_threshold: Option<f64>,
+  pub entries_aware_max_added_bytes_per_saved_request: Option<f64>,
   pub tags: Option<Vec<String>>,
   pub include_dependencies_recursively: Option<bool>,
 }

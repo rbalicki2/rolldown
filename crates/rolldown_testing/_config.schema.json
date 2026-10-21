@@ -1393,6 +1393,14 @@
           ],
           "format": "double"
         },
+        "entriesAwareMaxAddedBytesPerSavedRequest": {
+          "description": "Only effective when `entriesAware` is set to `true`. Merges subgroups while the included\nbytes a merge adds to loads, per request it saves them, stay within this budget.\nSee internal-docs/manual-code-splitting/implementation.md#entriesawaremaxaddedbytespersavedrequest.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
         "tags": {
           "description": "Filter modules by tags. Only modules with all specified tags are captured.\nSee internal-docs/module-tags/implementation.md",
           "type": [

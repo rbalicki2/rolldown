@@ -1,0 +1,29 @@
+{
+  "_comment": "Both `app` pages load `lib-app` and `lib-both`, and both `public` pages load `lib-public` and `lib-both`. Merging `lib-app` or `lib-public` into `lib-both` would save two pages a request each, but only `app` loads `lib-app` and only `public` loads `lib-public`, so even an unlimited budget never merges them: `public` would download `lib-app`, which nothing reachable from it imports.",
+  "config": {
+    "input": [
+      {
+        "name": "app",
+        "import": "./app.js"
+      },
+      {
+        "name": "public",
+        "import": "./public.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "test": "lib-",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 1000000
+        }
+      ]
+    },
+    "experimental": {
+      "attachDebugInfo": "full"
+    }
+  },
+  "hiddenRuntimeModule": true
+}

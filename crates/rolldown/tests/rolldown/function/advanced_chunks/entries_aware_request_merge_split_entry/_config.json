@@ -1,0 +1,22 @@
+{
+  "_comment": "The group captures `page.js` and `lib-page.js` but not `style.js`, which only `page.js` loads and so stays in the chunk of `page.js`. Moving `page.js` and `lib-page.js` into a `lib` chunk would make that chunk import the chunk of `page.js` for `style.js`, and the chunk of `page.js` import the `lib` chunk for the page's exports, so the modules only `page.js` loads stay out of the group. `lib-shared.js` goes to a `lib` chunk, which Rolldown's chunk optimizer then joins with the page's chunk.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "./main.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "test": "(lib-|page)",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 1000000
+        }
+      ]
+    }
+  },
+  "hiddenRuntimeModule": true
+}

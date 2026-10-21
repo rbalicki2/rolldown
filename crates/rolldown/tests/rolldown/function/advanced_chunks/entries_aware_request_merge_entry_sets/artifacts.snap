@@ -1,0 +1,89 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## app.js
+
+```js
+//! User-defined Entry: [Entry-Module-Id: app.js] [Name: app]
+import "./lib~app~public.js";
+// app.js
+const pages = [() => import("./page-app-1.js"), () => import("./page-app-2.js")];
+export { pages };
+
+```
+
+## lib~app~public.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: app.js, public.js]
+// lib-both.js
+console.log("lib-both");
+
+```
+
+## lib~page-app-1~page-app-2.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: page-app-1.js, page-app-2.js]
+// lib-app.js
+console.log("lib-app");
+
+```
+
+## lib~page-public-1~page-public-2.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: page-public-1.js, page-public-2.js]
+// lib-public.js
+console.log("lib-public");
+
+```
+
+## page-app-1.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-app-1.js] [Name: <none>]
+import "./lib~app~public.js";
+import "./lib~page-app-1~page-app-2.js";
+
+```
+
+## page-app-2.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-app-2.js] [Name: <none>]
+import "./lib~app~public.js";
+import "./lib~page-app-1~page-app-2.js";
+
+```
+
+## page-public-1.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-public-1.js] [Name: <none>]
+import "./lib~app~public.js";
+import "./lib~page-public-1~page-public-2.js";
+
+```
+
+## page-public-2.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-public-2.js] [Name: <none>]
+import "./lib~app~public.js";
+import "./lib~page-public-1~page-public-2.js";
+
+```
+
+## public.js
+
+```js
+//! User-defined Entry: [Entry-Module-Id: public.js] [Name: public]
+import "./lib~app~public.js";
+// public.js
+const pages = [() => import("./page-public-1.js"), () => import("./page-public-2.js")];
+export { pages };
+
+```

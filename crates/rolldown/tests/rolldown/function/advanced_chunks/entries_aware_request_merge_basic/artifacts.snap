@@ -1,0 +1,64 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## lib~page-a~page-b.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: page-a.js, page-b.js]
+// lib-ab.js
+console.log("lib-ab", "lib-ab is the largest module, so merging it costs the most bytes.");
+
+```
+
+## lib~page-a~page-b~page-c.js
+
+```js
+//! ManualCodeSplitting: [Group-Name: lib] [Entries: page-a.js, page-b.js, page-c.js]
+// lib-ac.js
+console.log("lib-ac");
+// lib-abc.js
+console.log("lib-abc");
+// lib-bc.js
+console.log("lib-bc");
+
+```
+
+## main.js
+
+```js
+//! User-defined Entry: [Entry-Module-Id: main.js] [Name: main]
+// main.js
+const pageA = () => import("./page-a.js");
+const pageB = () => import("./page-b.js");
+const pageC = () => import("./page-c.js");
+export { pageA, pageB, pageC };
+
+```
+
+## page-a.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-a.js] [Name: <none>]
+import "./lib~page-a~page-b.js";
+import "./lib~page-a~page-b~page-c.js";
+
+```
+
+## page-b.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-b.js] [Name: <none>]
+import "./lib~page-a~page-b.js";
+import "./lib~page-a~page-b~page-c.js";
+
+```
+
+## page-c.js
+
+```js
+//! Dynamic Entry: [Entry-Module-Id: page-c.js] [Name: <none>]
+import "./lib~page-a~page-b~page-c.js";
+
+```

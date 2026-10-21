@@ -111,6 +111,7 @@ mod compute_cross_chunk_links;
 mod compute_wrapped_esm_init_metadata;
 mod detect_ineffective_dynamic_imports;
 mod dynamic_already_loaded;
+mod entries_aware_request_merge;
 mod entry_facades;
 mod finalize_chunk_plan;
 mod finalize_modules;

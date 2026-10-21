@@ -1,0 +1,41 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## lib~other~page.js
+
+```js
+// HIDDEN [\0rolldown/runtime.js]
+// lib-shared.js
+const shared = "shared";
+// style.js
+console.log("style");
+// lib-page.js
+const libPage = "lib-page";
+// page.js
+var page_exports = /* @__PURE__ */ __exportAll({ default: () => page_default });
+var page_default = libPage + shared;
+export { shared as n, page_exports as t };
+
+```
+
+## main.js
+
+```js
+// main.js
+const page = () => import("./lib~other~page.js").then((n) => n.t);
+const other = () => import("./other.js");
+export { other, page };
+
+```
+
+## other.js
+
+```js
+import { n as shared } from "./lib~other~page.js";
+// other.js
+var other_default = shared;
+export { other_default as default };
+
+```

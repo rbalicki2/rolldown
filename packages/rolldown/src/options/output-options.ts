@@ -1005,6 +1005,30 @@ export type CodeSplittingGroup = {
    */
   entriesAwareMergeThreshold?: number;
   /**
+   * Merges `entriesAware` subgroups to cut the number of chunks each load requests.
+   *
+   * Each entry, including each dynamically imported module, is a load that downloads the
+   * subgroups it reaches. A merge saves one request on every load that downloads both subgroups,
+   * and costs the bytes it adds to loads that downloaded only one of them, counted with
+   * {@linkcode ChunkingModuleInfo.includedLength | includedLength}. Rolldown repeatedly makes the
+   * merge with the fewest added bytes per saved request while that number is at most this value.
+   *
+   * Subgroups that different sets of user-defined entries load, through the static and dynamic
+   * imports tree shaking kept, are never merged, so code only one entry loads never ships to
+   * another entry's pages. No merge makes two chunks import each other, and subgroups containing
+   * top-level await, or modules that wait for it, are never merged. Entry modules, emitted entries
+   * included, and the modules only one user-defined entry loads stay in their entry chunks, and so
+   * do the modules only one dynamic entry loads when that entry's chunk keeps a module the group
+   * does not capture.
+   *
+   * This option only works when {@linkcode CodeSplittingGroup.entriesAware | entriesAware}
+   * is `true`. It runs before
+   * {@linkcode CodeSplittingGroup.entriesAwareMergeThreshold | entriesAwareMergeThreshold}.
+   *
+   * @experimental
+   */
+  entriesAwareMaxAddedBytesPerSavedRequest?: number;
+  /**
    * Whether to include captured modules' dependencies.
    *
    * Enabling this option reduces the chance of generating circular chunks.
