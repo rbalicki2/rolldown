@@ -4,8 +4,9 @@
 //! load roots listed in `PAGE_LOADS`.
 //!
 //! The snapshot counts the files each page load downloads under default chunking, under an
-//! `entriesAware` group, with `entriesAwareMaxAddedBytesPerSavedRequest`, and with
-//! `entriesAwareLoadRoots` added.
+//! `entriesAware` group, with `entriesAwareMaxAddedBytesPerSavedRequest`, with
+//! `entriesAwareLoadRoots` added, and with requests counted on load roots only, dynamic entries'
+//! loads free and both entries' startup code fixed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -77,21 +78,26 @@ async fn bundle(code_splitting: Option<CodeSplittingMode>) -> BTreeMap<String, O
     .collect()
 }
 
-fn shared_group(
-  max_added_bytes_per_saved_request: Option<f64>,
-  load_roots: Option<Vec<Vec<String>>>,
-) -> CodeSplittingMode {
+fn shared_group(configure: impl FnOnce(&mut MatchGroup)) -> CodeSplittingMode {
+  let mut group = MatchGroup {
+    name: MatchGroupName::Static("shared".to_string()),
+    test: Some(MatchGroupTest::Regex(HybridRegex::new("(components|utils)/").unwrap())),
+    entries_aware: Some(true),
+    ..Default::default()
+  };
+  configure(&mut group);
   CodeSplittingMode::Advanced(ManualCodeSplittingOptions {
-    groups: Some(vec![MatchGroup {
-      name: MatchGroupName::Static("shared".to_string()),
-      test: Some(MatchGroupTest::Regex(HybridRegex::new("(components|utils)/").unwrap())),
-      entries_aware: Some(true),
-      entries_aware_max_added_bytes_per_saved_request: max_added_bytes_per_saved_request,
-      entries_aware_load_roots: load_roots,
-      ..Default::default()
-    }]),
+    groups: Some(vec![group]),
     ..Default::default()
   })
+}
+
+/// Returns the ids of the modules in `files`.
+fn module_ids(
+  chunks: &BTreeMap<String, OutputChunkSummary>,
+  files: &BTreeSet<String>,
+) -> BTreeSet<String> {
+  files.iter().flat_map(|file_name| chunks[file_name].module_ids.iter().cloned()).collect()
 }
 
 /// Returns the files a page load downloads before its page can render: the chunks of its entry,
@@ -147,21 +153,79 @@ fn assert_no_static_import_cycle(chunks: &BTreeMap<String, OutputChunkSummary>) 
 async fn entries_aware_request_explosion() {
   let load_roots: Vec<Vec<String>> =
     PAGE_LOADS.iter().map(|load| load.iter().map(ToString::to_string).collect()).collect();
+  let with_merge = |group: &mut MatchGroup| {
+    group.entries_aware_max_added_bytes_per_saved_request = Some(MAX_ADDED_BYTES_PER_SAVED_REQUEST);
+  };
+  let with_load_roots = |group: &mut MatchGroup| {
+    with_merge(group);
+    group.entries_aware_load_roots = Some(load_roots.clone());
+  };
+  let with_page_load_weighting = |group: &mut MatchGroup| {
+    with_load_roots(group);
+    group.entries_aware_count_load_roots_only = Some(true);
+    group.entries_aware_free_dynamic_entry_loads = Some(true);
+    group.entries_aware_no_growth_entries =
+      Some(vec!["app.js".to_string(), "public.js".to_string()]);
+  };
   let configs = [
     ("default chunking", None),
-    ("entriesAware", Some(shared_group(None, None))),
-    (
-      "+ maxAddedBytesPerSavedRequest",
-      Some(shared_group(Some(MAX_ADDED_BYTES_PER_SAVED_REQUEST), None)),
-    ),
-    ("+ loadRoots", Some(shared_group(Some(MAX_ADDED_BYTES_PER_SAVED_REQUEST), Some(load_roots)))),
+    ("entriesAware", Some(shared_group(|_| {}))),
+    ("+ maxAddedBytesPerSavedRequest", Some(shared_group(with_merge))),
+    ("+ loadRoots", Some(shared_group(with_load_roots))),
+    ("+ page-load weighting", Some(shared_group(with_page_load_weighting))),
   ];
+  // The configurations whose entries' startup code must not grow.
+  let no_growth_configs = ["+ page-load weighting"];
+  let mut startup_modules_without_merge: Option<Vec<BTreeSet<String>>> = None;
+  // The configurations that count requests on load roots only, which leave every module no page
+  // load downloads to default chunking.
+  let root_scoped_configs = ["+ page-load weighting"];
+  let mut default_chunk_by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
   let mut counts_by_config: Vec<Vec<String>> = Vec::new();
   let mut chunk_totals: Vec<usize> = Vec::new();
   for (label, code_splitting) in &configs {
     let chunks = bundle(code_splitting.clone()).await;
     assert_no_static_import_cycle(&chunks);
+    let startup_modules: Vec<BTreeSet<String>> = ["app.js", "public.js"]
+      .iter()
+      .map(|entry| module_ids(&chunks, &files_loaded(&chunks, &[entry])))
+      .collect();
+    let chunk_by_module: BTreeMap<String, BTreeSet<String>> = chunks
+      .values()
+      .flat_map(|chunk| {
+        let module_ids: BTreeSet<String> = chunk.module_ids.iter().cloned().collect();
+        chunk.module_ids.iter().map(move |id| (id.clone(), module_ids.clone()))
+      })
+      .collect();
+    if *label == "default chunking" {
+      default_chunk_by_module = chunk_by_module.clone();
+    }
+    if root_scoped_configs.contains(label) {
+      let downloaded: BTreeSet<String> = PAGE_LOADS
+        .iter()
+        .flat_map(|load| module_ids(&chunks, &files_loaded(&chunks, load)))
+        .collect();
+      for (module_id, chunk_modules) in &chunk_by_module {
+        if !downloaded.contains(module_id) {
+          assert_eq!(
+            Some(chunk_modules),
+            default_chunk_by_module.get(module_id),
+            "{label}: {module_id}, which no page load downloads, is not chunked as by default chunking"
+          );
+        }
+      }
+    }
+    if *label == "entriesAware" {
+      startup_modules_without_merge = Some(startup_modules.clone());
+    }
+    if no_growth_configs.contains(label) {
+      assert_eq!(
+        Some(&startup_modules),
+        startup_modules_without_merge.as_ref(),
+        "{label}: a merge added modules to an entry's startup code"
+      );
+    }
     let counts = PAGE_LOADS
       .iter()
       .map(|load| {

@@ -136,9 +136,19 @@ Known gaps:
 
 #### `entriesAwareLoadRoots`
 
-A page load is rarely one entry. A page downloads its entry's static graph, then its route chunks and the lazy components it renders first, each a separate dynamic entry. With only per-entry loads, two subgroups that no single entry downloads together never merge, even when every load of the page downloads both. Each load root lists entries that load together, and `entries_aware_loads` adds it to the per-entry loads, so the merge counts the requests it saves that page load. Roots are counted like any other load: they save requests and they pay for added bytes. Ids match an entry's module id or stable id, a leading `./` ignored; an id that matches no entry is an `INVALID_OPTION` error.
+A page load is rarely one entry. A page downloads its entry's static graph, then its route chunks and the lazy components it renders first, each a separate dynamic entry. With only per-entry loads, two subgroups that no single entry downloads together never merge, even when every load of the page downloads both. Each load root lists entries that load together, and `entries_aware_loads` adds it to the per-entry loads, so the merge counts the requests it saves that page load. Roots save requests and pay for added bytes; see [Cost weighting](#cost-weighting) for how other loads count. Ids match an entry's module id or stable id, a leading `./` ignored; an id that matches no entry is an `INVALID_OPTION` error.
 
-`function/advanced_chunks/entries_aware_request_explosion` measures both options on a two-entry app with twenty lazily loaded pages that each lazily load two widgets.
+#### Cost weighting
+
+By default every load saves requests and pays for what a merge adds, so a route loaded on its own weighs as much as a page load. Three options change that, through `LoadWeighting` on each load that `entries_aware_loads` builds:
+
+- `entriesAwareCountLoadRootsOnly`: requests saved and added count only on load roots. Bytes added to other loads still count. Since no merge can then save a request on a subgroup no load root downloads, `retain_subgroups_load_roots_download` drops those subgroups before the search, and their modules go to default chunking, whose common-chunk optimizer may put them into an entry's chunk. Pages outside the load roots get default chunking's chunks for them; `entries_aware_count_load_roots_only_default_chunking` shows one, and `entries_aware_request_explosion` checks it for every module no page load downloads.
+- `entriesAwareFreeDynamicEntryLoads`: the load of a single dynamic entry pays nothing for the bytes and requests a merge adds to it. Requests a merge saves it still count unless the option above is set.
+- `entriesAwareNoGrowthEntries`: the loads of the listed entries (user-defined or dynamic) must not grow. A merge that adds a subgroup to one of them is refused, whatever its cost.
+
+A load that neither saves requests, nor pays, nor must not grow is dropped before the search. With all three options and load roots for the pages to optimize, the merge prices only the page loads and the listed entries' loads, which matches an app-side layout that minimizes its main pages' requests and lets routes grow.
+
+`function/advanced_chunks/entries_aware_request_explosion` measures these options on a two-entry app with twenty lazily loaded pages that each lazily load two widgets, and checks that no merge adds to an entry's startup code when the entries are listed in `entriesAwareNoGrowthEntries`.
 
 ## Related
 

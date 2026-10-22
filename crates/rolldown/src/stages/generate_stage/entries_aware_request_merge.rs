@@ -22,8 +22,46 @@ pub(super) struct RequestMergeContext<'a> {
   pub included_lengths: &'a IndexVec<ModuleIdx, u32>,
   /// For each module, the user-defined entries that load it. See [`compute_module_loaders`].
   pub module_loaders: &'a IndexVec<ModuleIdx, BitSet>,
-  /// Each load is the set of entry indices whose chunks load together.
-  pub loads: &'a [BitSet],
+  pub loads: &'a [LoadSpec],
+}
+
+/// A load the merge counts: entries whose chunks load together.
+pub(super) struct LoadSpec {
+  /// Entry indices.
+  pub entries: BitSet,
+  pub weighting: LoadWeighting,
+}
+
+/// Says which effects of a merge on a load count toward the merge's cost.
+#[derive(Clone, Copy, Debug)]
+#[expect(clippy::struct_excessive_bools, reason = "each flag is set independently by an option")]
+pub(super) struct LoadWeighting {
+  /// A merge of two subgroups the load downloads saves it a request.
+  pub counts_saved_requests: bool,
+  /// Each subgroup the load starts downloading because of a merge, besides the merged one, is a
+  /// request the merge adds.
+  pub counts_added_requests: bool,
+  /// The included bytes the load starts downloading because of a merge count.
+  pub counts_added_bytes: bool,
+  /// No merge may add anything to the load.
+  pub no_growth: bool,
+}
+
+impl LoadWeighting {
+  pub const ALL: Self = Self {
+    counts_saved_requests: true,
+    counts_added_requests: true,
+    counts_added_bytes: true,
+    no_growth: false,
+  };
+
+  /// Tells whether the load constrains or prices any merge.
+  fn matters(self) -> bool {
+    self.counts_saved_requests
+      || self.counts_added_requests
+      || self.counts_added_bytes
+      || self.no_growth
+  }
 }
 
 /// Merges subgroups, cheapest first, while the included bytes a merge adds to the loads that
@@ -50,6 +88,37 @@ pub(super) fn merge_entries_aware_subgroups_by_requests(
   }
 }
 
+/// Removes the subgroups that no load in `load_roots` downloads: none of the root's entries reach
+/// them, directly or through the kept static imports of subgroups a root downloads. Their modules
+/// go back to default chunking.
+pub(super) fn retain_subgroups_load_roots_download(
+  subgroups: &mut FxHashMap<u32, EntriesAwareSubgroup>,
+  link_output: &LinkStageOutput,
+  load_roots: &[BitSet],
+) {
+  let node_by_module: FxHashMap<ModuleIdx, u32> = subgroups
+    .iter()
+    .flat_map(|(key, subgroup)| subgroup.modules.iter().map(move |module_idx| (*module_idx, *key)))
+    .collect();
+  let mut downloaded: FxHashSet<u32> = FxHashSet::default();
+  let mut pending: Vec<u32> = subgroups
+    .iter()
+    .filter(|(_, subgroup)| {
+      load_roots.iter().any(|root| subgroup.bits.index_of_one().any(|bit| root.has_bit(bit)))
+    })
+    .map(|(key, _)| *key)
+    .collect();
+  while let Some(key) = pending.pop() {
+    if downloaded.insert(key) {
+      pending.extend(
+        collect_imported_nodes(key, &subgroups[&key].modules, &node_by_module, link_output)
+          .into_keys(),
+      );
+    }
+  }
+  subgroups.retain(|key, _| downloaded.contains(key));
+}
+
 /// One subgroup as the merge sees it. Subgroups are numbered in key order.
 struct NodeInput {
   included_bytes: f64,
@@ -65,13 +134,20 @@ struct NodeInput {
   imports: FxHashMap<u32, bool>,
 }
 
-/// Returns the merge's nodes, numbered in `keys` order, and for each load with at least one
-/// subgroup, the nodes holding modules its entries reach directly.
+/// A load as the merge sees it.
+struct LoadInput {
+  /// The nodes holding modules the load's entries reach directly.
+  seeds: Vec<u32>,
+  weighting: LoadWeighting,
+}
+
+/// Returns the merge's nodes, numbered in `keys` order, and each load that downloads at least one
+/// subgroup.
 fn build_merge_input(
   subgroups: &FxHashMap<u32, EntriesAwareSubgroup>,
   keys: &[u32],
   ctx: &RequestMergeContext<'_>,
-) -> (Vec<NodeInput>, Vec<Vec<u32>>) {
+) -> (Vec<NodeInput>, Vec<LoadInput>) {
   let node_by_module: FxHashMap<ModuleIdx, u32> = keys
     .iter()
     .enumerate()
@@ -111,7 +187,7 @@ fn build_merge_input(
           .modules
           .iter()
           .any(|module_idx| ctx.link_output.metas[*module_idx].is_tla_or_contains_tla_dependency),
-        imports: collect_imported_nodes(node, &subgroup.modules, &node_by_module, ctx),
+        imports: collect_imported_nodes(node, &subgroup.modules, &node_by_module, ctx.link_output),
       }
     })
     .collect();
@@ -120,12 +196,14 @@ fn build_merge_input(
     .iter()
     .filter_map(|load| {
       let seeds: FxHashSet<u32> = load
+        .entries
         .index_of_one()
         .filter_map(|entry_index| nodes_by_entry.get(&entry_index))
         .flatten()
         .copied()
         .collect();
-      (!seeds.is_empty()).then(|| seeds.into_iter().collect())
+      (!seeds.is_empty())
+        .then(|| LoadInput { seeds: seeds.into_iter().collect(), weighting: load.weighting })
     })
     .collect();
   (nodes, loads)
@@ -137,9 +215,9 @@ fn collect_imported_nodes(
   node: u32,
   modules: &FxHashSet<ModuleIdx>,
   node_by_module: &FxHashMap<ModuleIdx, u32>,
-  ctx: &RequestMergeContext<'_>,
+  link_output: &LinkStageOutput,
 ) -> FxHashMap<u32, bool> {
-  let metas = &ctx.link_output.metas;
+  let metas = &link_output.metas;
   let mut imports: FxHashMap<u32, bool> = FxHashMap::default();
   let mut visited_outside: FxHashSet<ModuleIdx> = FxHashSet::default();
   let mut pending: VecDeque<(ModuleIdx, bool)> = modules
@@ -237,14 +315,35 @@ impl Bits {
     words_ones(self.0.iter().copied())
   }
 
-  /// Counts the bits set in `self` and in `other`.
-  fn count_and(&self, other: &Self) -> u32 {
-    self.0.iter().zip(&other.0).map(|(word, other_word)| (word & other_word).count_ones()).sum()
+  /// Counts the bits set in `self`, in `other` and in `mask`.
+  fn count_and(&self, other: &Self, mask: &Self) -> u32 {
+    self
+      .words_with(other, mask, |word, other_word, mask_word| word & other_word & mask_word)
+      .map(u64::count_ones)
+      .sum()
   }
 
-  /// Counts the bits set in `self` and not in `other`.
-  fn count_and_not(&self, other: &Self) -> u32 {
-    self.0.iter().zip(&other.0).map(|(word, other_word)| (word & !other_word).count_ones()).sum()
+  /// Counts the bits set in `self` and in `mask` and not in `other`.
+  fn count_and_not(&self, other: &Self, mask: &Self) -> u32 {
+    self
+      .words_with(other, mask, |word, other_word, mask_word| word & !other_word & mask_word)
+      .map(u64::count_ones)
+      .sum()
+  }
+
+  /// Returns `combine` of each word of `self` with the same word of `other` and of `mask`.
+  fn words_with<'a>(
+    &'a self,
+    other: &'a Self,
+    mask: &'a Self,
+    combine: impl Fn(u64, u64, u64) -> u64 + 'a,
+  ) -> impl Iterator<Item = u64> + 'a {
+    self
+      .0
+      .iter()
+      .zip(&other.0)
+      .zip(&mask.0)
+      .map(move |((word, other_word), mask_word)| combine(*word, *other_word, *mask_word))
   }
 }
 
@@ -316,6 +415,16 @@ struct Merger {
   loaded: Vec<Bits>,
   /// For each node, the loads that download it.
   loaded_by: Vec<Bits>,
+  /// Loads whose saved requests count.
+  saving: Bits,
+  /// Loads whose added requests count.
+  adding_requests: Bits,
+  /// Loads whose added bytes count.
+  charging: Bits,
+  /// Loads no merge may add to.
+  no_growth: Bits,
+  /// Loads whose added bytes or added requests count.
+  priced: Bits,
   queue: BinaryHeap<Reverse<Candidate>>,
 }
 
@@ -327,10 +436,12 @@ struct Merger {
 /// bytes changed are priced again; every other pair's cost reads data the merge did not change.
 fn plan_merges(
   nodes: &[NodeInput],
-  loads: &[Vec<u32>],
+  loads: &[LoadInput],
   max_added_bytes_per_saved_request: f64,
 ) -> Vec<(u32, u32)> {
-  let mut merger = Merger::new(nodes, loads, max_added_bytes_per_saved_request);
+  // A load that neither prices nor constrains a merge only costs time.
+  let loads: Vec<&LoadInput> = loads.iter().filter(|load| load.weighting.matters()).collect();
+  let mut merger = Merger::new(nodes, &loads, max_added_bytes_per_saved_request);
   let mut merges = Vec::new();
   while let Some(Reverse(candidate)) = merger.queue.pop() {
     let Candidate { host, absorbed, exact, host_version, absorbed_version, .. } = candidate;
@@ -361,7 +472,11 @@ fn plan_merges(
 }
 
 impl Merger {
-  fn new(nodes: &[NodeInput], loads: &[Vec<u32>], max_added_bytes_per_saved_request: f64) -> Self {
+  fn new(
+    nodes: &[NodeInput],
+    loads: &[&LoadInput],
+    max_added_bytes_per_saved_request: f64,
+  ) -> Self {
     let nodes_len = nodes.len();
     let mut importers = vec![FxHashSet::default(); nodes_len];
     for (node, input) in nodes.iter().enumerate() {
@@ -386,9 +501,9 @@ impl Merger {
       .collect();
     let loaded: Vec<Bits> = loads
       .iter()
-      .map(|seeds| {
+      .map(|load| {
         let mut loaded = Bits::new(nodes_len);
-        for seed in seeds {
+        for seed in &load.seeds {
           loaded.union_with(&closure[*seed as usize]);
         }
         loaded
@@ -400,7 +515,23 @@ impl Merger {
         loaded_by[node as usize].set(u32::try_from(load).expect("Too many loads"));
       }
     }
+    let loads_with = |counts: fn(LoadWeighting) -> bool| {
+      let mut with = Bits::new(loads.len());
+      for (index, load) in loads.iter().enumerate() {
+        if counts(load.weighting) {
+          with.set(u32::try_from(index).expect("Too many loads"));
+        }
+      }
+      with
+    };
     let mut merger = Self {
+      saving: loads_with(|weighting| weighting.counts_saved_requests),
+      adding_requests: loads_with(|weighting| weighting.counts_added_requests),
+      charging: loads_with(|weighting| weighting.counts_added_bytes),
+      no_growth: loads_with(|weighting| weighting.no_growth),
+      priced: loads_with(|weighting| {
+        weighting.counts_added_bytes || weighting.counts_added_requests
+      }),
       max_added_bytes_per_saved_request,
       included_bytes: nodes.iter().map(|node| node.included_bytes).collect(),
       loaders: nodes.iter().map(|node| node.loaders).collect(),
@@ -423,14 +554,16 @@ impl Merger {
 
   /// Queues every pair of `node` and a partner `include` accepts that may merge, keyed by a lower
   /// bound of its cost. A partner may merge when it is alive, has the same loaders, has no
-  /// top-level await, and some load downloads both.
+  /// top-level await, and some load whose saved requests count downloads both.
   fn queue_pairs(&mut self, node: u32, include: impl Fn(u32) -> bool) {
     if !self.mergeable[node as usize] {
       return;
     }
     let mut partners = Bits::new(self.alive.len());
     for load in self.loaded_by[node as usize].ones() {
-      partners.union_with(&self.loaded[load as usize]);
+      if self.saving.has(load) {
+        partners.union_with(&self.loaded[load as usize]);
+      }
     }
     for partner in partners.ones() {
       if partner == node
@@ -458,34 +591,49 @@ impl Merger {
   }
 
   /// Returns a lower bound of the pair's cost: each load that downloads one node gains at least
-  /// the other node, and the requests the merge adds are not subtracted. `None` when no load
-  /// downloads both.
+  /// the other node, and the requests the merge adds are not subtracted. `None` when the merge
+  /// saves no request or adds to a load that must not grow.
   fn lower_bound_cost(&self, host: u32, absorbed: u32) -> Option<f64> {
     let host_loads = &self.loaded_by[host as usize];
     let absorbed_loads = &self.loaded_by[absorbed as usize];
-    let saved_requests = host_loads.count_and(absorbed_loads);
-    if saved_requests == 0 {
+    let saved_requests = host_loads.count_and(absorbed_loads, &self.saving);
+    if saved_requests == 0 || self.grows_a_no_growth_load(host, absorbed) {
       return None;
     }
     let added_bytes = self.included_bytes[absorbed as usize].mul_add(
-      f64::from(host_loads.count_and_not(absorbed_loads)),
-      self.included_bytes[host as usize] * f64::from(absorbed_loads.count_and_not(host_loads)),
+      f64::from(host_loads.count_and_not(absorbed_loads, &self.charging)),
+      self.included_bytes[host as usize]
+        * f64::from(absorbed_loads.count_and_not(host_loads, &self.charging)),
     );
     Some(added_bytes / f64::from(saved_requests))
   }
 
-  /// Returns the included bytes the merge adds over all loads per request it saves them, or
-  /// `None` when it saves no request in total. A load that downloads one node and not the other
-  /// gains the other node's closure, apart from what it already downloads.
+  /// Tells whether a load that must not grow downloads one node of the pair and not the other.
+  fn grows_a_no_growth_load(&self, host: u32, absorbed: u32) -> bool {
+    self.loaded_by[host as usize]
+      .words_with(&self.loaded_by[absorbed as usize], &self.no_growth, |host, absorbed, mask| {
+        (host ^ absorbed) & mask
+      })
+      .any(|word| word != 0)
+  }
+
+  /// Returns the included bytes the merge adds over the loads whose added bytes count, per
+  /// request it saves in total, or `None` when it saves no request in total or adds to a load that
+  /// must not grow. A load that downloads one node and not the other gains the other node's
+  /// closure, apart from what it already downloads.
   fn exact_cost(&self, host: u32, absorbed: u32) -> Option<f64> {
     let host_loads = &self.loaded_by[host as usize];
     let absorbed_loads = &self.loaded_by[absorbed as usize];
-    let saved_requests = host_loads.count_and(absorbed_loads);
+    let saved_requests = host_loads.count_and(absorbed_loads, &self.saving);
+    if self.grows_a_no_growth_load(host, absorbed) {
+      return None;
+    }
     let mut added_requests = 0_u32;
     let mut added_bytes = 0.0;
-    let one_side_loads = words_ones(
-      host_loads.0.iter().zip(&absorbed_loads.0).map(|(host, absorbed)| host ^ absorbed),
-    );
+    let one_side_loads =
+      words_ones(host_loads.words_with(absorbed_loads, &self.priced, |host, absorbed, priced| {
+        (host ^ absorbed) & priced
+      }));
     for load in one_side_loads {
       let other = if host_loads.has(load) { absorbed } else { host };
       let loaded = &self.loaded[load as usize];
@@ -494,13 +642,18 @@ impl Merger {
         .iter()
         .zip(&loaded.0)
         .map(|(closure_word, loaded_word)| closure_word & !loaded_word);
+      let charges = self.charging.has(load);
       let mut added_nodes = 0_u32;
       for node in words_ones(added) {
-        added_bytes += self.included_bytes[node as usize];
+        if charges {
+          added_bytes += self.included_bytes[node as usize];
+        }
         added_nodes += 1;
       }
-      // `other` itself joins a chunk the load already downloads.
-      added_requests += added_nodes - 1;
+      if self.adding_requests.has(load) {
+        // `other` itself joins a chunk the load already downloads.
+        added_requests += added_nodes - 1;
+      }
     }
     let net_saved_requests = saved_requests.checked_sub(added_requests).filter(|net| *net > 0)?;
     Some(added_bytes / f64::from(net_saved_requests))
@@ -640,7 +793,7 @@ mod tests {
 
   use rustc_hash::{FxHashMap, FxHashSet};
 
-  use super::{NodeInput, merge_makes_cycle, plan_merges};
+  use super::{LoadInput, LoadWeighting, NodeInput, merge_makes_cycle, plan_merges};
 
   const NO_MERGES: Vec<(u32, u32)> = Vec::new();
 
@@ -651,6 +804,10 @@ mod tests {
       mergeable: true,
       imports: imports.iter().copied().collect(),
     }
+  }
+
+  fn full(seeds: &[u32]) -> LoadInput {
+    LoadInput { seeds: seeds.to_vec(), weighting: LoadWeighting::ALL }
   }
 
   fn imports_of(nodes: &[NodeInput]) -> Vec<FxHashMap<u32, bool>> {
@@ -684,7 +841,7 @@ mod tests {
   fn cost_counts_saved_requests_and_added_bytes() {
     // Load A downloads 0 and 1; load B downloads only 1. Merging saves A one request and adds 0's
     // 10 bytes to B.
-    let loads = [vec![0, 1], vec![1]];
+    let loads = [full(&[0, 1]), full(&[1])];
     assert_eq!(plan_merges(&[node(10.0, &[]), node(30.0, &[])], &loads, 10.0), [(0, 1)]);
     assert_eq!(plan_merges(&[node(10.0, &[]), node(30.0, &[])], &loads, 9.0), NO_MERGES);
   }
@@ -695,13 +852,13 @@ mod tests {
     // make B download 1 and 2, one request more, so it saves nothing in total; merging 1 and 2
     // saves A one request and costs nothing.
     let nodes = || vec![node(10.0, &[]), node(20.0, &[(2, false)]), node(5.0, &[])];
-    let loads = [vec![0, 1], vec![0]];
+    let loads = [full(&[0, 1]), full(&[0])];
     assert_eq!(plan_merges(&nodes(), &loads, 0.0), [(1, 2)]);
   }
 
   #[test]
   fn nodes_with_top_level_await_never_merge() {
-    let loads = [vec![0, 1], vec![1]];
+    let loads = [full(&[0, 1]), full(&[1])];
     let mut nodes = vec![node(10.0, &[]), node(30.0, &[])];
     nodes[1].mergeable = false;
     assert_eq!(plan_merges(&nodes, &loads, 100.0), NO_MERGES);
@@ -709,7 +866,7 @@ mod tests {
 
   #[test]
   fn nodes_with_different_loaders_never_merge() {
-    let loads = [vec![0, 1]];
+    let loads = [full(&[0, 1])];
     let mut nodes = vec![node(10.0, &[]), node(30.0, &[])];
     nodes[1].loaders = 1;
     assert_eq!(plan_merges(&nodes, &loads, 100.0), NO_MERGES);
@@ -734,7 +891,7 @@ mod tests {
     nodes_len: u32,
     loads_len: u32,
     seeds_per_load: u32,
-  ) -> (Vec<NodeInput>, Vec<Vec<u32>>) {
+  ) -> (Vec<NodeInput>, Vec<LoadInput>) {
     let nodes = (0..nodes_len)
       .map(|node| {
         let mut imports = FxHashMap::default();
@@ -760,7 +917,14 @@ mod tests {
       .map(|_| {
         let seeds: FxHashSet<u32> =
           (0..=rng.below(seeds_per_load)).map(|_| rng.below(nodes_len)).collect();
-        seeds.into_iter().collect()
+        let no_growth = rng.below(15) == 0;
+        let weighting = LoadWeighting {
+          counts_saved_requests: rng.below(3) != 0,
+          counts_added_requests: rng.below(3) != 0,
+          counts_added_bytes: rng.below(3) != 0,
+          no_growth,
+        };
+        LoadInput { seeds: seeds.into_iter().collect(), weighting }
       })
       .collect();
     (nodes, loads)
@@ -770,14 +934,14 @@ mod tests {
   /// from scratch.
   fn reference_plan(
     nodes: &[NodeInput],
-    loads: &[Vec<u32>],
+    loads: &[LoadInput],
     max_added_bytes_per_saved_request: f64,
   ) -> Vec<(u32, u32)> {
     let mut imports = imports_of(nodes);
     let mut bytes: Vec<f64> = nodes.iter().map(|node| node.included_bytes).collect();
     let mut alive = vec![true; nodes.len()];
     let mut seeds: Vec<FxHashSet<u32>> =
-      loads.iter().map(|seeds| seeds.iter().copied().collect()).collect();
+      loads.iter().map(|load| load.seeds.iter().copied().collect()).collect();
     let collect =
       |imports: &[FxHashMap<u32, bool>], seeds: &FxHashSet<u32>, merge: Option<(u32, u32)>| {
         let mut loaded = FxHashSet::default();
@@ -817,23 +981,30 @@ mod tests {
           let mut saved = 0_i64;
           let mut added_requests = 0_i64;
           let mut added_bytes = 0.0;
+          let mut grows_no_growth_load = false;
           for (load, loaded) in loaded.iter().enumerate() {
+            let weighting = loads[load].weighting;
             let (has_host, has_absorbed) = (loaded.contains(&host), loaded.contains(&absorbed));
             if has_host && has_absorbed {
-              saved += 1;
+              saved += i64::from(weighting.counts_saved_requests);
             } else if has_host || has_absorbed {
+              grows_no_growth_load |= weighting.no_growth;
               let after = collect(&imports, &seeds[load], Some((host, absorbed)));
               let bytes_of = |node: &u32| {
                 if *node == host { bytes[h] + bytes[a] } else { bytes[*node as usize] }
               };
-              added_bytes += after.iter().map(bytes_of).sum::<f64>()
-                - loaded.iter().map(|node| bytes[*node as usize]).sum::<f64>();
-              added_requests +=
-                i64::try_from(after.len()).unwrap() - i64::try_from(loaded.len()).unwrap();
+              if weighting.counts_added_bytes {
+                added_bytes += after.iter().map(bytes_of).sum::<f64>()
+                  - loaded.iter().map(|node| bytes[*node as usize]).sum::<f64>();
+              }
+              if weighting.counts_added_requests {
+                added_requests +=
+                  i64::try_from(after.len()).unwrap() - i64::try_from(loaded.len()).unwrap();
+              }
             }
           }
           let net = saved - added_requests;
-          if saved == 0 || net <= 0 {
+          if saved == 0 || net <= 0 || grows_no_growth_load {
             continue;
           }
           #[expect(clippy::cast_precision_loss)]
@@ -887,7 +1058,7 @@ mod tests {
   /// Returns a graph shaped like an app's: 1,000 route subgroups that each import a few of 1,200
   /// component subgroups, which import a few of 800 utility subgroups, and 2,000 loads of single
   /// dynamic entries, each downloading one to three route or component subgroups.
-  fn app_like_graph(rng: &mut Rng) -> (Vec<NodeInput>, Vec<Vec<u32>>) {
+  fn app_like_graph(rng: &mut Rng) -> (Vec<NodeInput>, Vec<LoadInput>) {
     const ROUTES: u32 = 1000;
     const COMPONENTS: u32 = 1200;
     const UTILITIES: u32 = 800;
@@ -913,22 +1084,44 @@ mod tests {
       })
       .collect();
     let loads = (0..2000)
-      .map(|_| (0..=rng.below(3)).map(|_| rng.below(ROUTES + COMPONENTS)).collect())
+      .map(|_| LoadInput {
+        seeds: (0..=rng.below(3)).map(|_| rng.below(ROUTES + COMPONENTS)).collect(),
+        weighting: LoadWeighting::ALL,
+      })
       .collect();
     (nodes, loads)
   }
 
   /// Times the search on [`app_like_graph`] plus ten page loads that each download 20 route or
-  /// component subgroups. Prints the time with `--nocapture`.
+  /// component subgroups, with every load counting and with the dynamic entries' loads free and
+  /// requests counted on page loads only. Prints the time with `--nocapture`.
   #[test]
   #[expect(clippy::print_stderr)]
   fn thousands_of_dynamic_entries() {
-    let mut rng = Rng(42);
-    let (nodes, mut loads) = app_like_graph(&mut rng);
-    loads.extend((0..10).map(|_| (0..20).map(|_| rng.below(2200)).collect()));
-    let started = Instant::now();
-    let merges = plan_merges(&nodes, &loads, 8000.0);
-    eprintln!("{} merges in {:?}", merges.len(), started.elapsed());
-    assert_ne!(merges.len(), 0);
+    let free = LoadWeighting {
+      counts_saved_requests: false,
+      counts_added_requests: false,
+      counts_added_bytes: false,
+      no_growth: false,
+    };
+    for dynamic_entry_weighting in [LoadWeighting::ALL, free] {
+      let mut rng = Rng(42);
+      let (nodes, mut loads) = app_like_graph(&mut rng);
+      for load in &mut loads {
+        load.weighting = dynamic_entry_weighting;
+      }
+      loads.extend((0..10).map(|_| LoadInput {
+        seeds: (0..20).map(|_| rng.below(2200)).collect(),
+        weighting: LoadWeighting::ALL,
+      }));
+      let started = Instant::now();
+      let merges = plan_merges(&nodes, &loads, 8000.0);
+      eprintln!(
+        "dynamic entries {dynamic_entry_weighting:?}: {} merges in {:?}",
+        merges.len(),
+        started.elapsed()
+      );
+      assert_ne!(merges.len(), 0);
+    }
   }
 }

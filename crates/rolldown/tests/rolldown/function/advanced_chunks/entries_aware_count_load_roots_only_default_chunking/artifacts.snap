@@ -1,0 +1,48 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## lib~page-a~page-b.js
+
+```js
+// lib-shared.js
+console.log("lib-shared");
+
+```
+
+## main.js
+
+```js
+// main.js
+const pageA = () => import("./page-a.js");
+const pageB = () => import("./page-b.js");
+const pageC = () => import("./page-c.js");
+export { pageA, pageB, pageC };
+
+```
+
+## page-a.js
+
+```js
+import "./lib~page-a~page-b.js";
+// lib-a.js
+console.log("lib-a");
+
+```
+
+## page-b.js
+
+```js
+import "./lib~page-a~page-b.js";
+import "./page-c.js";
+
+```
+
+## page-c.js
+
+```js
+// lib-c.js
+console.log("lib-c");
+
+```

@@ -447,6 +447,10 @@ fn normalize_code_splitting(
                   entries_aware_max_added_bytes_per_saved_request: item
                     .entries_aware_max_added_bytes_per_saved_request,
                   entries_aware_load_roots: item.entries_aware_load_roots,
+                  entries_aware_count_load_roots_only: item.entries_aware_count_load_roots_only,
+                  entries_aware_free_dynamic_entry_loads: item
+                    .entries_aware_free_dynamic_entry_loads,
+                  entries_aware_no_growth_entries: item.entries_aware_no_growth_entries,
                   tags: item.tags.map(|tags| tags.into_iter().map(ModuleTag::from).collect()),
                   include_dependencies_recursively: item.include_dependencies_recursively,
                 })

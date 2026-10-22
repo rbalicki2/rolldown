@@ -31,7 +31,8 @@ use super::{
   chunk_ext::{ChunkCreationReason, ChunkDebugExt},
   code_splitting::IndexSplittingInfo,
   entries_aware_request_merge::{
-    RequestMergeContext, compute_module_loaders, merge_entries_aware_subgroups_by_requests,
+    LoadSpec, LoadWeighting, RequestMergeContext, compute_module_loaders,
+    merge_entries_aware_subgroups_by_requests, retain_subgroups_load_roots_download,
   },
 };
 
@@ -390,6 +391,19 @@ impl ManualSplitter<'_> {
       if let Some(max_added_bytes_per_saved_request) = max_added_bytes_per_saved_request {
         // Resolved even when there is nothing to merge, so a wrong id is always reported.
         let loads = self.entries_aware_loads(match_group_index)?;
+        let match_group = &self.match_groups[match_group_index];
+        if match_group.entries_aware_count_load_roots_only.unwrap_or(false) {
+          // No merge saves a request on a subgroup no load root downloads, so such a subgroup
+          // would only split default chunking's chunks further.
+          let load_roots = match_group
+            .entries_aware_load_roots
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|root| self.resolve_entry_ids(match_group_index, "entriesAwareLoadRoots", root))
+            .collect::<BuildResult<Vec<BitSet>>>()?;
+          retain_subgroups_load_roots_download(&mut subgroups, self.link_output, &load_roots);
+        }
         if subgroups.len() > 1 {
           merge_entries_aware_subgroups_by_requests(
             &mut subgroups,
@@ -497,20 +511,46 @@ impl ManualSplitter<'_> {
   }
 
   /// Returns the loads the request-aware merge counts: each entry on its own, then each of the
-  /// group's `entriesAwareLoadRoots`. Errors when a load root names a module that is not an entry.
-  fn entries_aware_loads(&self, match_group_index: usize) -> BuildResult<Vec<BitSet>> {
+  /// group's `entriesAwareLoadRoots`, weighted by the group's options. Errors when a load root or
+  /// a no-growth entry names a module that is not an entry.
+  /// See internal-docs/manual-code-splitting/implementation.md#cost-weighting.
+  fn entries_aware_loads(&self, match_group_index: usize) -> BuildResult<Vec<LoadSpec>> {
+    let match_group = &self.match_groups[match_group_index];
     let entries_len: u32 = self.flattened_entries.len().try_into().expect("Too many entries");
-    let load_roots =
-      self.match_groups[match_group_index].entries_aware_load_roots.as_deref().unwrap_or_default();
-    let mut loads: Vec<BitSet> = (0..entries_len)
-      .map(|entry_index| {
-        let mut load = BitSet::new(entries_len);
-        load.set_bit(entry_index);
-        load
+    let count_load_roots_only = match_group.entries_aware_count_load_roots_only.unwrap_or(false);
+    let free_dynamic_entry_loads =
+      match_group.entries_aware_free_dynamic_entry_loads.unwrap_or(false);
+    let no_growth_entries = self.resolve_entry_ids(
+      match_group_index,
+      "entriesAwareNoGrowthEntries",
+      match_group.entries_aware_no_growth_entries.as_deref().unwrap_or_default(),
+    )?;
+    let mut loads: Vec<LoadSpec> = self
+      .flattened_entries
+      .iter()
+      .enumerate()
+      .map(|(entry_index, entry)| {
+        let entry_index: u32 = entry_index.try_into().expect("Too many entries");
+        let mut entries = BitSet::new(entries_len);
+        entries.set_bit(entry_index);
+        let free = free_dynamic_entry_loads && !entry.kind.is_user_defined();
+        LoadSpec {
+          entries,
+          weighting: LoadWeighting {
+            counts_saved_requests: !count_load_roots_only,
+            counts_added_requests: !count_load_roots_only && !free,
+            counts_added_bytes: !free,
+            no_growth: no_growth_entries.has_bit(entry_index),
+          },
+        }
       })
       .collect();
+    let load_roots = match_group.entries_aware_load_roots.as_deref().unwrap_or_default();
     for load_root in load_roots {
-      loads.push(self.resolve_entry_ids(match_group_index, "entriesAwareLoadRoots", load_root)?);
+      loads.push(LoadSpec {
+        entries: self.resolve_entry_ids(match_group_index, "entriesAwareLoadRoots", load_root)?,
+        weighting: LoadWeighting::ALL,
+      });
     }
     Ok(loads)
   }

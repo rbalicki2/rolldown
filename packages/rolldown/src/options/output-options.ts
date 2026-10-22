@@ -1051,6 +1051,48 @@ export type CodeSplittingGroup = {
    */
   entriesAwareLoadRoots?: string[][];
   /**
+   * When `true`, the requests a merge saves and the requests it adds count only on
+   * {@linkcode CodeSplittingGroup.entriesAwareLoadRoots | load roots}. Bytes a merge adds still
+   * count on every load. Use it when the load roots are the page loads to optimize and the other
+   * loads should only limit how much merges add to them. Modules of the group that no load root
+   * downloads are left to default chunking, since no merge could save a request on them.
+   *
+   * Only effective with
+   * {@linkcode CodeSplittingGroup.entriesAwareMaxAddedBytesPerSavedRequest | entriesAwareMaxAddedBytesPerSavedRequest}.
+   *
+   * @default false
+   * @experimental
+   */
+  entriesAwareCountLoadRootsOnly?: boolean;
+  /**
+   * When `true`, the bytes and requests a merge adds to the load of a single dynamic entry, such
+   * as a route or a lazy component loaded on its own, cost nothing. Requests a merge saves such a
+   * load still count unless
+   * {@linkcode CodeSplittingGroup.entriesAwareCountLoadRootsOnly | entriesAwareCountLoadRootsOnly}
+   * is set.
+   *
+   * Only effective with
+   * {@linkcode CodeSplittingGroup.entriesAwareMaxAddedBytesPerSavedRequest | entriesAwareMaxAddedBytesPerSavedRequest}.
+   *
+   * @default false
+   * @experimental
+   */
+  entriesAwareFreeDynamicEntryLoads?: boolean;
+  /**
+   * Ids of entries whose startup code must not grow. No merge adds a module of the group to what
+   * one of these entries loads on its own, so a merge that would is not made. Dynamically imported
+   * modules can be listed too, such as a lazy component every page of an entry loads.
+   *
+   * Each id must be the id of an entry or of a dynamically imported module, either absolute or
+   * relative to {@linkcode InputOptions.cwd | cwd}.
+   *
+   * Only effective with
+   * {@linkcode CodeSplittingGroup.entriesAwareMaxAddedBytesPerSavedRequest | entriesAwareMaxAddedBytesPerSavedRequest}.
+   *
+   * @experimental
+   */
+  entriesAwareNoGrowthEntries?: string[];
+  /**
    * Whether to include captured modules' dependencies.
    *
    * Enabling this option reduces the chance of generating circular chunks.

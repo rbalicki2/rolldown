@@ -1,0 +1,24 @@
+{
+  "_comment": "The only load root is `main.js` + `page-a.js`, and requests count only on it, so no merge can save a request on a subgroup it does not download. `lib-c` is loaded by `page-b`, which imports `page-c` statically, and by `page-c`; the group leaves it to default chunking, which puts it in the chunk of `page-c`, instead of a `lib~page-b~page-c` chunk of its own. `lib-shared`, which the root downloads, stays in the group.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "./main.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "test": "lib-",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 1000,
+          "entriesAwareLoadRoots": [["./main.js", "./page-a.js"]],
+          "entriesAwareCountLoadRootsOnly": true
+        }
+      ]
+    }
+  },
+  "hiddenRuntimeModule": true
+}

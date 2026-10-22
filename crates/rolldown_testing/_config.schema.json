@@ -1414,6 +1414,30 @@
             }
           }
         },
+        "entriesAwareCountLoadRootsOnly": {
+          "description": "Only effective with `entries_aware_max_added_bytes_per_saved_request`. When `true`, the\nrequests a merge saves or adds count only on load roots.\nSee internal-docs/manual-code-splitting/implementation.md#cost-weighting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "entriesAwareFreeDynamicEntryLoads": {
+          "description": "Only effective with `entries_aware_max_added_bytes_per_saved_request`. When `true`, the bytes\nand requests a merge adds to the load of a single dynamic entry cost nothing.\nSee internal-docs/manual-code-splitting/implementation.md#cost-weighting.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "entriesAwareNoGrowthEntries": {
+          "description": "Only effective with `entries_aware_max_added_bytes_per_saved_request`. Module ids of entries\nwhose startup code must not grow: no merge adds a module of the group to what one of these\nentries loads on its own.\nSee internal-docs/manual-code-splitting/implementation.md#cost-weighting.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
         "tags": {
           "description": "Filter modules by tags. Only modules with all specified tags are captured.\nSee internal-docs/module-tags/implementation.md",
           "type": [

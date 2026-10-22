@@ -85,6 +85,19 @@ pub struct MatchGroup {
   /// counts.
   /// See internal-docs/manual-code-splitting/implementation.md#entriesawareloadroots.
   pub entries_aware_load_roots: Option<Vec<Vec<String>>>,
+  /// Only effective with `entries_aware_max_added_bytes_per_saved_request`. When `true`, the
+  /// requests a merge saves or adds count only on load roots.
+  /// See internal-docs/manual-code-splitting/implementation.md#cost-weighting.
+  pub entries_aware_count_load_roots_only: Option<bool>,
+  /// Only effective with `entries_aware_max_added_bytes_per_saved_request`. When `true`, the bytes
+  /// and requests a merge adds to the load of a single dynamic entry cost nothing.
+  /// See internal-docs/manual-code-splitting/implementation.md#cost-weighting.
+  pub entries_aware_free_dynamic_entry_loads: Option<bool>,
+  /// Only effective with `entries_aware_max_added_bytes_per_saved_request`. Module ids of entries
+  /// whose startup code must not grow: no merge adds a module of the group to what one of these
+  /// entries loads on its own.
+  /// See internal-docs/manual-code-splitting/implementation.md#cost-weighting.
+  pub entries_aware_no_growth_entries: Option<Vec<String>>,
   /// Filter modules by tags. Only modules with all specified tags are captured.
   /// See internal-docs/module-tags/implementation.md
   #[cfg_attr(
