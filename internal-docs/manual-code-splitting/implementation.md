@@ -148,7 +148,15 @@ By default every load saves requests and pays for what a merge adds, so a route 
 
 A load that neither saves requests, nor pays, nor must not grow is dropped before the search. With all three options and load roots for the pages to optimize, the merge prices only the page loads and the listed entries' loads, which matches an app-side layout that minimizes its main pages' requests and lets routes grow.
 
-`function/advanced_chunks/entries_aware_request_explosion` measures these options on a two-entry app with twenty lazily loaded pages that each lazily load two widgets, and checks that no merge adds to an entry's startup code when the entries are listed in `entriesAwareNoGrowthEntries`.
+#### `entriesAwareIsolate`
+
+Only subgroups with the same loaders merge. Without this option the loaders are the user-defined entries that reach a subgroup, so a router that imports every route keeps nothing apart: a signed-out entry whose router imports the signed-in pages counts as loading them, even when it redirects before they load. Each `entriesAwareIsolate` item is a set of globs of entry and dynamic entry module ids (`entries_aware_isolate_sets`, matched like plugin `include` filters, relative to `cwd`; a glob that matches no entry is an `INVALID_OPTION` error).
+
+`compute_module_loaders` then walks from each user-defined entry without following a dynamic import of a set's entry, and from each set's entries without following a dynamic import of another set's entry. A module that some user-defined entry reaches is loaded by those entries only; a module none reaches is loaded by the sets that reach it. Merges join only equal loaders, so a module that only a set leads to never shares a chunk with one that a load outside the set downloads, and a set's loads can still download modules the entries load.
+
+Compared with an app-side layout that treats one entry's visitors as never loading guarded routes, this is stricter in one way: a module only guarded routes reach never merges with a module only the other entry loads outside the guarded routes, because the set, not the entry, loads it.
+
+`function/advanced_chunks/entries_aware_request_explosion` measures these options on a two-entry app with twenty lazily loaded pages that each lazily load two widgets, fourteen of them for signed-in visitors only. It checks that no build has a static chunk cycle, that entry modules stay in their entry chunks, that no merge adds to an entry's startup code when the entries are listed in `entriesAwareNoGrowthEntries`, and that signed-out page loads download no signed-in-only module when the signed-in pages are isolated.
 
 ## Related
 

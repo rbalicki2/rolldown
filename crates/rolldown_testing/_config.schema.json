@@ -1438,6 +1438,19 @@
             "type": "string"
           }
         },
+        "entriesAwareIsolate": {
+          "description": "Only effective with `entries_aware_max_added_bytes_per_saved_request`. Sets of globs of entry\nand dynamically imported module ids. A module that only the entries of one set lead to never\nshares a chunk with a module that other loads download.\nSee internal-docs/manual-code-splitting/implementation.md#entriesawareisolate.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
         "tags": {
           "description": "Filter modules by tags. Only modules with all specified tags are captured.\nSee internal-docs/module-tags/implementation.md",
           "type": [

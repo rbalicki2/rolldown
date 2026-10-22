@@ -913,6 +913,7 @@ const AdvancedChunksSchema = v.strictObject({
         entriesAwareCountLoadRootsOnly: v.optional(v.boolean()),
         entriesAwareFreeDynamicEntryLoads: v.optional(v.boolean()),
         entriesAwareNoGrowthEntries: v.optional(v.array(v.string())),
+        entriesAwareIsolate: v.optional(v.array(v.array(v.string()))),
         includeDependenciesRecursively: v.optional(v.boolean()),
         tags: v.optional(v.array(v.string())),
       }),

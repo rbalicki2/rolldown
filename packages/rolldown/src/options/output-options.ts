@@ -1093,6 +1093,31 @@ export type CodeSplittingGroup = {
    */
   entriesAwareNoGrowthEntries?: string[];
   /**
+   * Sets of entries and dynamically imported modules whose code must not reach other loads. A
+   * module that only one set's modules lead to, through the imports tree shaking kept, never
+   * shares a chunk with a module that loads outside the set download. Use it for routes some
+   * visitors never load, such as pages a signed-out visitor is redirected away from before they
+   * load, even though the router imports them.
+   *
+   * The import of a set's module counts only for the set, so a module that both a set and an
+   * entry outside it lead to belongs with the entry, and the entry's loads may download it.
+   *
+   * Each item is a glob of module ids, absolute or relative to
+   * {@linkcode InputOptions.cwd | cwd}; an exact id matches itself. Each glob must match an entry
+   * or a dynamically imported module.
+   *
+   * Only effective with
+   * {@linkcode CodeSplittingGroup.entriesAwareMaxAddedBytesPerSavedRequest | entriesAwareMaxAddedBytesPerSavedRequest}.
+   *
+   * @example
+   * ```js
+   * entriesAwareIsolate: [['src/routes/settings/**', 'src/routes/billing.js']]
+   * ```
+   *
+   * @experimental
+   */
+  entriesAwareIsolate?: string[][];
+  /**
    * Whether to include captured modules' dependencies.
    *
    * Enabling this option reduces the chance of generating circular chunks.

@@ -4,11 +4,12 @@ expression: table
 ---
 Files each page load downloads and their unminified bytes, by configuration.
 
-page load                                       default chunking                    entriesAware  + maxAddedBytesPerSavedRequest                     + loadRoots           + page-load weighting
-app.js + pages/page-00.js                       22 files, 4953 B                23 files, 7058 B                10 files, 5638 B                 7 files, 4846 B                 8 files, 5099 B
-app.js + pages/page-01.js                       26 files, 5352 B                28 files, 7554 B                10 files, 5856 B                 7 files, 5093 B                 7 files, 4620 B
-app.js + pages/page-02.js                       24 files, 5011 B                27 files, 6895 B                 9 files, 5305 B                 7 files, 5113 B                 8 files, 5285 B
-app.js + pages/page-07.js                       23 files, 5137 B                25 files, 7448 B                13 files, 6409 B                 9 files, 5913 B                 8 files, 5175 B
-public.js + pages/page-00.js                    22 files, 4242 B                23 files, 6347 B                10 files, 4927 B                 7 files, 4135 B                 8 files, 4388 B
-public.js + pages/page-01.js                    26 files, 4641 B                28 files, 6843 B                10 files, 5145 B                 7 files, 4382 B                 7 files, 3909 B
-chunks in the build                                           74                              85                              50                              45                              47
+page load                                       default chunking                    entriesAware  + maxAddedBytesPerSavedRequest                     + loadRoots           + page-load weighting                       + isolate                  + every module
+app.js + pages/page-00.js                       22 files, 4953 B                23 files, 7058 B                10 files, 5914 B                 8 files, 5473 B                 8 files, 5002 B                 8 files, 5099 B                 5 files, 5272 B
+app.js + pages/page-01.js                       26 files, 5352 B                28 files, 7554 B                11 files, 6078 B                 7 files, 4899 B                 7 files, 4523 B                 7 files, 4620 B                 5 files, 5262 B
+app.js + pages/page-02.js                       24 files, 5011 B                27 files, 6895 B                10 files, 6042 B                 8 files, 5638 B                 8 files, 5188 B                 8 files, 5285 B                 5 files, 5610 B
+app.js + pages/page-07.js                       23 files, 5137 B                25 files, 7448 B                11 files, 5830 B                 8 files, 5510 B                 8 files, 5302 B                 8 files, 5175 B                 6 files, 5750 B
+public.js + pages/page-00.js                    22 files, 4956 B                23 files, 7061 B                10 files, 5917 B                 8 files, 5476 B                 8 files, 5005 B                 8 files, 5102 B                 5 files, 5275 B
+public.js + pages/page-01.js                    26 files, 5355 B                28 files, 7557 B                11 files, 6081 B                 7 files, 4902 B                 7 files, 4526 B                 7 files, 4623 B                 5 files, 5265 B
+chunks in the build                                           74                              85                              47                              43                              47                              47                              38
+signed-in-only on public                                       0                               0                               2                               3                               0                               0                               0

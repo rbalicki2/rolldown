@@ -2615,6 +2615,7 @@ export interface BindingMatchGroup {
   entriesAwareCountLoadRootsOnly?: boolean
   entriesAwareFreeDynamicEntryLoads?: boolean
   entriesAwareNoGrowthEntries?: Array<string>
+  entriesAwareIsolate?: Array<Array<string>>
   tags?: Array<string>
   includeDependenciesRecursively?: boolean
 }

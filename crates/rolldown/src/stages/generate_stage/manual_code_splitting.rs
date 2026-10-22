@@ -17,7 +17,11 @@ use rolldown_common::{
 };
 use rolldown_error::{BuildDiagnostic, BuildResult, InvalidOptionType};
 use rolldown_plugin::SharedPluginDriver;
-use rolldown_utils::{BitSet, IndexBitSet, concat_string, xxhash::xxhash_with_base};
+use rolldown_utils::{
+  BitSet, IndexBitSet, concat_string,
+  pattern_filter::{StringOrRegex, StringOrRegexMatchKind, normalize_path},
+  xxhash::xxhash_with_base,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::utils::module_id_matcher::match_module_ids;
@@ -404,15 +408,24 @@ impl ManualSplitter<'_> {
             .collect::<BuildResult<Vec<BitSet>>>()?;
           retain_subgroups_load_roots_download(&mut subgroups, self.link_output, &load_roots);
         }
+        let isolate_sets = self.entries_aware_isolate_sets(match_group_index)?;
         if subgroups.len() > 1 {
+          let isolated_loaders;
+          let module_loaders = if isolate_sets.is_empty() {
+            self.module_loaders.get_or_init(|| {
+              compute_module_loaders(self.link_output, &self.flattened_entries, &[])
+            })
+          } else {
+            isolated_loaders =
+              compute_module_loaders(self.link_output, &self.flattened_entries, &isolate_sets);
+            &isolated_loaders
+          };
           merge_entries_aware_subgroups_by_requests(
             &mut subgroups,
             &RequestMergeContext {
               link_output: self.link_output,
               included_lengths: self.included_lengths(),
-              module_loaders: self
-                .module_loaders
-                .get_or_init(|| compute_module_loaders(self.link_output, &self.flattened_entries)),
+              module_loaders,
               loads: &loads,
             },
             max_added_bytes_per_saved_request,
@@ -553,6 +566,46 @@ impl ManualSplitter<'_> {
       });
     }
     Ok(loads)
+  }
+
+  /// Returns, for each of the group's `entriesAwareIsolate` sets, the entry indices of the entries
+  /// whose module id matches one of the set's patterns: globs, absolute or relative to `cwd`, a
+  /// leading `./` ignored. An exact module id is a glob that matches itself. Errors when a pattern
+  /// matches no entry.
+  fn entries_aware_isolate_sets(&self, match_group_index: usize) -> BuildResult<Vec<BitSet>> {
+    let entries_len: u32 = self.flattened_entries.len().try_into().expect("Too many entries");
+    let cwd = self.options.cwd.to_string_lossy();
+    let isolate =
+      self.match_groups[match_group_index].entries_aware_isolate.as_deref().unwrap_or_default();
+    isolate
+      .iter()
+      .map(|patterns| {
+        let mut entries = BitSet::new(entries_len);
+        for pattern in patterns {
+          let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
+          let matcher = StringOrRegex::String(pattern.to_string());
+          let mut found = false;
+          for (entry_index, entry) in self.flattened_entries.iter().enumerate() {
+            let module_id = self.link_output.module_table[entry.idx].id().as_str();
+            if matcher.test(&normalize_path(module_id), &StringOrRegexMatchKind::Id(&cwd)) {
+              entries.set_bit(entry_index.try_into().expect("Too many entries"));
+              found = true;
+            }
+          }
+          if !found {
+            return Err(
+              BuildDiagnostic::invalid_option(InvalidOptionType::EntriesAwareIdNotAnEntry {
+                option_name: "entriesAwareIsolate",
+                group_index: match_group_index,
+                module_id: pattern.to_string(),
+              })
+              .into(),
+            );
+          }
+        }
+        Ok(entries)
+      })
+      .collect()
   }
 
   /// Returns the entry indices of the entries whose module has one of `module_ids` as its id or

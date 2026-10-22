@@ -1,0 +1,22 @@
+{
+  "_comment": "`missing/*.js` matches no entry or dynamically imported module, so the isolate set cannot be resolved.",
+  "config": {
+    "input": [
+      {
+        "name": "main",
+        "import": "main.js"
+      }
+    ],
+    "codeSplitting": {
+      "groups": [
+        {
+          "name": "lib",
+          "entriesAware": true,
+          "entriesAwareMaxAddedBytesPerSavedRequest": 50,
+          "entriesAwareIsolate": [["page.js", "missing/*.js"]]
+        }
+      ]
+    }
+  },
+  "expectError": true
+}

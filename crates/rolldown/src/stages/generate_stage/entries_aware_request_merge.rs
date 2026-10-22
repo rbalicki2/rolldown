@@ -240,12 +240,17 @@ fn collect_imported_nodes(
   imports
 }
 
-/// Returns, for each module, the user-defined entries that load it: those from whose module it
-/// can be reached through kept static imports (`load_dependencies`) and dynamic imports whose
-/// statement tree shaking kept. Bits are positions in the list of user-defined entries.
+/// Returns, for each module, who loads it: the user-defined entries from whose module it can be
+/// reached through kept static imports (`load_dependencies`) and dynamic imports whose statement
+/// tree shaking kept, without a dynamic import of an entry in `isolate_sets`. A module no
+/// user-defined entry loads that way is instead loaded by the isolate sets from whose entries it
+/// can be reached, each entering only its own entries. Bits are positions in the list of
+/// user-defined entries, followed by one per isolate set.
+/// See internal-docs/manual-code-splitting/implementation.md#entriesawareisolate.
 pub(super) fn compute_module_loaders(
   link_output: &LinkStageOutput,
   flattened_entries: &[&EntryPoint],
+  isolate_sets: &[BitSet],
 ) -> IndexVec<ModuleIdx, BitSet> {
   let metas = &link_output.metas;
   let mut dynamic_imports: FxHashMap<ModuleIdx, Vec<ModuleIdx>> = FxHashMap::default();
@@ -259,17 +264,34 @@ pub(super) fn compute_module_loaders(
       }
     }
   }
-  let user_entries: Vec<ModuleIdx> = flattened_entries
+  // The isolate sets each isolated module's entries belong to.
+  let mut sets_by_module: FxHashMap<ModuleIdx, Vec<usize>> = FxHashMap::default();
+  for (set, entries) in isolate_sets.iter().enumerate() {
+    for entry_index in entries.index_of_one() {
+      sets_by_module.entry(flattened_entries[entry_index as usize].idx).or_default().push(set);
+    }
+  }
+  // Each loader with the modules it starts from and the isolate set it may enter.
+  let user_loaders = flattened_entries
     .iter()
     .filter(|entry| entry.kind.is_user_defined())
-    .map(|entry| entry.idx)
-    .collect();
-  let loaders_len: u32 = user_entries.len().try_into().expect("Too many entries");
+    .map(|entry| (vec![entry.idx], None));
+  let set_loaders = isolate_sets.iter().enumerate().map(|(set, entries)| {
+    let modules: Vec<ModuleIdx> = entries
+      .index_of_one()
+      .map(|entry_index| flattened_entries[entry_index as usize].idx)
+      .collect();
+    (modules, Some(set))
+  });
+  let loaders_list: Vec<(Vec<ModuleIdx>, Option<usize>)> =
+    user_loaders.chain(set_loaders).collect();
+  let user_loaders_len = loaders_list.len() - isolate_sets.len();
+  let loaders_len: u32 = loaders_list.len().try_into().expect("Too many entries");
   let mut loaders =
     IndexVec::from_vec(vec![BitSet::new(loaders_len); link_output.module_table.modules.len()]);
-  for (loader, entry_module) in user_entries.iter().enumerate() {
+  for (loader, (start, own_set)) in loaders_list.iter().enumerate() {
     let loader: u32 = loader.try_into().expect("Too many entries");
-    let mut pending = vec![*entry_module];
+    let mut pending = start.clone();
     while let Some(module_idx) = pending.pop() {
       if !matches!(link_output.module_table[module_idx], Module::Normal(_))
         || !metas[module_idx].is_included
@@ -278,7 +300,24 @@ pub(super) fn compute_module_loaders(
         continue;
       }
       pending.extend(metas[module_idx].load_dependencies.iter().copied());
-      pending.extend(dynamic_imports.get(&module_idx).into_iter().flatten().copied());
+      pending.extend(dynamic_imports.get(&module_idx).into_iter().flatten().copied().filter(
+        |imported| {
+          sets_by_module
+            .get(imported)
+            .is_none_or(|sets| own_set.is_some_and(|own_set| sets.contains(&own_set)))
+        },
+      ));
+    }
+  }
+  if !isolate_sets.is_empty() {
+    for module_loaders in &mut loaders {
+      let user_loaded = (0..user_loaders_len)
+        .any(|loader| module_loaders.has_bit(u32::try_from(loader).expect("Too many entries")));
+      if user_loaded {
+        for loader in user_loaders_len..loaders_list.len() {
+          module_loaders.clear_bit(u32::try_from(loader).expect("Too many entries"));
+        }
+      }
     }
   }
   loaders

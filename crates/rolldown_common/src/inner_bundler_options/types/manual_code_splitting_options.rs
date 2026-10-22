@@ -98,6 +98,11 @@ pub struct MatchGroup {
   /// entries loads on its own.
   /// See internal-docs/manual-code-splitting/implementation.md#cost-weighting.
   pub entries_aware_no_growth_entries: Option<Vec<String>>,
+  /// Only effective with `entries_aware_max_added_bytes_per_saved_request`. Sets of globs of entry
+  /// and dynamically imported module ids. A module that only the entries of one set lead to never
+  /// shares a chunk with a module that other loads download.
+  /// See internal-docs/manual-code-splitting/implementation.md#entriesawareisolate.
+  pub entries_aware_isolate: Option<Vec<Vec<String>>>,
   /// Filter modules by tags. Only modules with all specified tags are captured.
   /// See internal-docs/module-tags/implementation.md
   #[cfg_attr(

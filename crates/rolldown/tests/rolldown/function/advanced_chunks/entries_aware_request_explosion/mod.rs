@@ -1,12 +1,15 @@
-//! Two entries share a router; `app` routes to twenty lazily loaded pages and `public` to the
-//! first six. Each page imports components and lazily loads two widgets before it renders, and
-//! components import shared utilities. Each page load is its entry, its page and its widgets, the
-//! load roots listed in `PAGE_LOADS`.
+//! Two entries share a router that routes to twenty lazily loaded pages. Pages 06 to 19 are for
+//! signed-in visitors: `app` loads them, and `public` redirects before it would, though its
+//! routes still import them. Each page imports components and lazily loads two widgets before it
+//! renders, and components import shared utilities. Each page load is its entry, its page and its
+//! widgets, the load roots listed in `PAGE_LOADS`.
 //!
 //! The snapshot counts the files each page load downloads under default chunking, under an
 //! `entriesAware` group, with `entriesAwareMaxAddedBytesPerSavedRequest`, with
-//! `entriesAwareLoadRoots` added, and with requests counted on load roots only, dynamic entries'
-//! loads free and both entries' startup code fixed.
+//! `entriesAwareLoadRoots` added, with requests counted on load roots only, dynamic entries'
+//! loads free and both entries' startup code fixed, with the signed-in pages isolated, and with
+//! every module in the group. It also counts the signed-in-only modules `public` page loads
+//! download, which only isolation keeps at zero.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -32,9 +35,12 @@ const PAGE_LOADS: [&[&str]; 6] = [
   &["public.js", "pages/page-01.js", "widgets/w-04.js", "widgets/w-09.js"],
 ];
 
-/// Components only pages 06 to 19 and their widgets import. `public` routes to pages 00 to 05
-/// only, so its page loads must never download these.
-const APP_ONLY_COMPONENTS: [&str; 10] =
+/// Globs of the pages only signed-in visitors load.
+const SIGNED_IN_PAGES: [&str; 2] = ["pages/page-0[6-9].js", "pages/page-1?.js"];
+
+/// Components only pages 06 to 19 and their widgets import. `public` page loads must never
+/// download these.
+const SIGNED_IN_ONLY_COMPONENTS: [&str; 10] =
   ["c-03", "c-10", "c-12", "c-21", "c-23", "c-27", "c-29", "c-34", "c-35", "c-38"];
 
 const MAX_ADDED_BYTES_PER_SAVED_REQUEST: f64 = 1000.0;
@@ -107,10 +113,14 @@ fn files_loaded(chunks: &BTreeMap<String, OutputChunkSummary>, load: &[&str]) ->
   let mut pending: Vec<String> = load
     .iter()
     .map(|module| {
+      let suffix = format!("/{module}");
+      // A module whose chunk is a facade is found by the facade; one merged into a shared chunk,
+      // by the chunk that holds it.
       chunks
         .iter()
-        .find(|(_, chunk)| {
-          chunk.facade_module_id.as_ref().is_some_and(|id| id.ends_with(&format!("/{module}")))
+        .find(|(_, chunk)| chunk.facade_module_id.as_ref().is_some_and(|id| id.ends_with(&suffix)))
+        .or_else(|| {
+          chunks.iter().find(|(_, chunk)| chunk.module_ids.iter().any(|id| id.ends_with(&suffix)))
         })
         .map(|(file_name, _)| file_name.clone())
         .unwrap_or_else(|| panic!("no chunk for {module}"))
@@ -167,19 +177,34 @@ async fn entries_aware_request_explosion() {
     group.entries_aware_no_growth_entries =
       Some(vec!["app.js".to_string(), "public.js".to_string()]);
   };
+  let with_isolate = |group: &mut MatchGroup| {
+    with_page_load_weighting(group);
+    group.entries_aware_isolate =
+      Some(vec![SIGNED_IN_PAGES.iter().map(ToString::to_string).collect()]);
+  };
+  let with_every_module = |group: &mut MatchGroup| {
+    with_isolate(group);
+    group.test = None;
+  };
   let configs = [
     ("default chunking", None),
     ("entriesAware", Some(shared_group(|_| {}))),
     ("+ maxAddedBytesPerSavedRequest", Some(shared_group(with_merge))),
     ("+ loadRoots", Some(shared_group(with_load_roots))),
     ("+ page-load weighting", Some(shared_group(with_page_load_weighting))),
+    ("+ isolate", Some(shared_group(with_isolate))),
+    ("+ every module", Some(shared_group(with_every_module))),
   ];
   // The configurations whose entries' startup code must not grow.
-  let no_growth_configs = ["+ page-load weighting"];
+  let no_growth_configs = ["+ page-load weighting", "+ isolate", "+ every module"];
+  // The configurations whose `public` page loads must not download signed-in-only modules: those
+  // that merge nothing, and those that isolate the signed-in pages.
+  let isolating_configs = ["default chunking", "entriesAware", "+ isolate", "+ every module"];
+  let mut signed_in_only_downloads: Vec<usize> = Vec::new();
   let mut startup_modules_without_merge: Option<Vec<BTreeSet<String>>> = None;
   // The configurations that count requests on load roots only, which leave every module no page
   // load downloads to default chunking.
-  let root_scoped_configs = ["+ page-load weighting"];
+  let root_scoped_configs = ["+ page-load weighting", "+ isolate", "+ every module"];
   let mut default_chunk_by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
   let mut counts_by_config: Vec<Vec<String>> = Vec::new();
@@ -226,24 +251,38 @@ async fn entries_aware_request_explosion() {
         "{label}: a merge added modules to an entry's startup code"
       );
     }
+    // Entry modules stay in their entry chunks.
+    for entry in ["app.js", "public.js"] {
+      assert!(
+        chunks.values().any(|chunk| {
+          chunk.facade_module_id.as_ref().is_some_and(|id| id.ends_with(&format!("/{entry}")))
+            && chunk.module_ids.iter().any(|id| id.ends_with(&format!("/{entry}")))
+        }),
+        "{label}: {entry} moved out of its entry chunk"
+      );
+    }
+    let mut signed_in_only = BTreeSet::new();
     let counts = PAGE_LOADS
       .iter()
       .map(|load| {
         let loaded = files_loaded(&chunks, load);
         if load[0] == "public.js" {
-          for file_name in &loaded {
-            for module_id in &chunks[file_name].module_ids {
-              assert!(
-                !APP_ONLY_COMPONENTS.iter().any(|component| module_id.contains(component)),
-                "{label}: {load:?} downloads {module_id}, which only `app` pages import"
-              );
-            }
-          }
+          signed_in_only.extend(module_ids(&chunks, &loaded).into_iter().filter(|module_id| {
+            SIGNED_IN_ONLY_COMPONENTS.iter().any(|component| module_id.contains(component))
+          }));
         }
         let bytes: usize = loaded.iter().map(|file_name| chunks[file_name].code_length).sum();
         format!("{} files, {bytes} B", loaded.len())
       })
       .collect();
+    if isolating_configs.contains(label) {
+      assert_eq!(
+        signed_in_only,
+        BTreeSet::new(),
+        "{label}: `public` page loads download signed-in-only modules"
+      );
+    }
+    signed_in_only_downloads.push(signed_in_only.len());
     counts_by_config.push(counts);
     chunk_totals.push(chunks.len());
   }
@@ -266,6 +305,10 @@ async fn entries_aware_request_explosion() {
     );
   }
   write_row("chunks in the build", &mut chunk_totals.iter().map(ToString::to_string));
+  write_row(
+    "signed-in-only on public",
+    &mut signed_in_only_downloads.iter().map(ToString::to_string),
+  );
 
   insta::with_settings!({ snapshot_path => FIXTURE_DIR, prepend_module_to_snapshot => false }, {
     insta::assert_snapshot!("chunk_counts", table);

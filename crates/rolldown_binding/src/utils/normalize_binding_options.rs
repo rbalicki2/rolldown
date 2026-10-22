@@ -451,6 +451,7 @@ fn normalize_code_splitting(
                   entries_aware_free_dynamic_entry_loads: item
                     .entries_aware_free_dynamic_entry_loads,
                   entries_aware_no_growth_entries: item.entries_aware_no_growth_entries,
+                  entries_aware_isolate: item.entries_aware_isolate,
                   tags: item.tags.map(|tags| tags.into_iter().map(ModuleTag::from).collect()),
                   include_dependencies_recursively: item.include_dependencies_recursively,
                 })
